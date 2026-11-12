@@ -5,10 +5,10 @@ import {fileURLToPath} from 'node:url';
 
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const privatePath = /(?:^|\/)(?:local|runtime|backups|node_modules|\.git|\.gradle|build|bin|dist|dist-electron|test-results|desktop-test-results|playwright-report|\.idea|\.vscode)(?:\/|$)|^frontend\/public\/resume\/|^JD(?:门槛\.json|搜索任务单.*\.md)$|(?:^|\/)\.env(?:\.|$)|\.local\.|(?:^|\/)application-local\.|\.(?:key|pem|p12|pfx|sql|db|sqlite\w*|docx|pdf)$/i;
-const textExtension = /\.(?:md|txt|json|yml|yaml|java|gradle|properties|ts|vue|html|scss|css|mjs|cjs|js|ps1|bat)$|(?:^|\/)(?:LICENSE|NOTICE|\.gitignore|gradlew)$/i;
+const textExtension = /\.(?:md|txt|json|geojson|yml|yaml|java|gradle|properties|ts|mts|vue|html|scss|css|mjs|cjs|js|py|ps1|bat)$|(?:^|\/)(?:LICENSE|NOTICE|\.gitignore|gradlew)$/i;
 const rules = [
   ['phone-number', /(?<![\d])1[3-9]\d{9}(?![\d])/],
-  ['personal-email', /[\w.+-]+@(?!example\.(?:com|org|net)\b|[^\s@]*\.test\b)[\w.-]+\.[a-z]{2,}/i],
+  ['personal-email', /(?<![\w.+/\-])[\w.+-]+@(?!example\.(?:com|org|net)\b|[^\s@]*\.test\b)[\w.-]+\.[a-z]{2,}/i],
   ['private-key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
   ['api-key', /\b(?:sk-[a-zA-Z0-9_-]{20,}|AKIA[A-Z0-9]{16}|gh[pousr]_[a-zA-Z0-9]{30,})\b/],
   ['personal-absolute-path', /\b[A-Z]:[\\/](?:Users|workspace[^\\/\s`"']*)[\\/]/i],
@@ -67,7 +67,11 @@ export async function audit(root, files) {
       continue;
     }
     const text = await readFile(path.join(root, relative), 'utf8');
-    const lines = text.split(/\r?\n/);
+    // OSM relation/node IDs are integers, some of which resemble mobile numbers.
+    // Only omit those numeric arrays in this known map asset; strings and other fields remain scanned.
+    const scanned = relative === 'frontend/src/company/assets/shanghai-metro.geojson'
+      ? text.replace(/("(?:nodes|relations)"\s*:\s*\[)[\d,\s]+(\])/g, '$1$2') : text;
+    const lines = scanned.split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       for (const [rule, pattern] of rules) {
         if (pattern.test(lines[i])) findings.push({file: relative, line: i + 1, rule});

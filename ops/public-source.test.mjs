@@ -29,3 +29,38 @@ test('public criteria example rejects confirmed answers while allowing loopback 
   const findings = await audit(root, await directoryFiles(root));
   assert.deepEqual(findings, [{file: 'config/criteria.example.json', rule: 'personal-criteria-answer'}]);
 });
+
+test('invalid URL userinfo fixtures are not mistaken for personal email addresses', async () => {
+  const root = await mkdtemp(path.join(projectRoot, 'runtime/audit-fixture-'));
+  await writeFile(path.join(root, 'sample.mjs'),
+    'https://user@www.zhipin.com/job_detail/a.html\nhttps://x@careers.example.com/jobs/42\n');
+  assert.deepEqual(await audit(root, await directoryFiles(root)), []);
+  const email = ['fixture', '@', 'private.invalid'].join('');
+  await writeFile(path.join(root, 'sample.mjs'), `mailto:${email}\n${email}\n`);
+  assert.deepEqual((await audit(root, await directoryFiles(root))).map(item => item.rule),
+    ['personal-email', 'personal-email']);
+});
+
+test('map data, Python sources and TypeScript declarations are scanned as text', async () => {
+  const root = await mkdtemp(path.join(projectRoot, 'runtime/audit-fixture-'));
+  const files = ['map.geojson', 'generator.py', 'contract.d.mts'];
+  const email = ['fixture', '@', 'private.invalid'].join('');
+  for (const file of files) await writeFile(path.join(root, file), email);
+  const findings = await audit(root, await directoryFiles(root));
+  assert.equal(findings.length, files.length);
+  assert.ok(findings.every(item => item.rule === 'personal-email'));
+});
+
+test('known metro OSM identifiers are allowed while contact values remain rejected', async () => {
+  const root = await mkdtemp(path.join(projectRoot, 'runtime/audit-fixture-'));
+  const {mkdir} = await import('node:fs/promises');
+  const file = 'frontend/src/company/assets/shanghai-metro.geojson';
+  await mkdir(path.dirname(path.join(root, file)), {recursive: true});
+  const phone = ['138', '0013', '8000'].join('');
+  await writeFile(path.join(root, file), JSON.stringify({nodes: [Number(phone)], relations: [Number(phone)]}));
+  assert.deepEqual(await audit(root, await directoryFiles(root)), []);
+  for (const properties of [{nodes: [phone]}, {phone: Number(phone)}]) {
+    await writeFile(path.join(root, file), JSON.stringify(properties));
+    assert.deepEqual((await audit(root, await directoryFiles(root))).map(item => item.rule), ['phone-number']);
+  }
+});
