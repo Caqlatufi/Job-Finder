@@ -6,6 +6,67 @@ export interface Road {
   bounds: [Coordinate, Coordinate];
 }
 export interface RoadLabel {name: string; x: number; y: number}
+export type RoadBounds = [Coordinate, Coordinate];
+export interface RoadTransform {scaleX: number; scaleY: number; x: number; y: number}
+const radians = Math.PI / 180;
+export const projectMercator = ([longitude, latitude]: number[]): Coordinate =>
+  [longitude * radians, -Math.log(Math.tan(Math.PI / 4 + latitude * radians / 2))];
+export const unprojectMercator = ([x, y]: number[]): Coordinate =>
+  [x / radians, (2 * Math.atan(Math.exp(-y)) - Math.PI / 2) / radians];
+
+// A north-up Mercator map is affine after projection. Sample ECharts only twice per frame.
+export const roadTransform = (project: (point: Coordinate) => number[]): RoadTransform => {
+  const a: Coordinate = [121, 31], b: Coordinate = [122, 32];
+  const origin = project(a), diagonal = project(b), worldA = projectMercator(a), worldB = projectMercator(b);
+  const scaleX = (diagonal[0] - origin[0]) / (worldB[0] - worldA[0]);
+  const scaleY = (diagonal[1] - origin[1]) / (worldB[1] - worldA[1]);
+  return {scaleX, scaleY, x: origin[0] - scaleX * worldA[0], y: origin[1] - scaleY * worldA[1]};
+};
+export const roadPixel = (transform: RoadTransform, coordinate: Coordinate): Coordinate => {
+  const world = projectMercator(coordinate);
+  return [world[0] * transform.scaleX + transform.x, world[1] * transform.scaleY + transform.y];
+};
+
+// ECharts 5.6 applies custom unprojection before its inverse pixel transform. Invert our affine frame instead.
+export const roadCoordinate = (transform: RoadTransform, [x, y]: Coordinate): Coordinate =>
+  unprojectMercator([(x - transform.x) / transform.scaleX, (y - transform.y) / transform.scaleY]);
+
+/** Geographic grid built once; viewport queries visit nearby cells instead of the whole city. */
+export class RoadIndex {
+  private readonly cells = new Map<string, Road[]>();
+  private readonly extent = [Infinity, Infinity, -Infinity, -Infinity];
+  private readonly size = 0.02;
+
+  constructor(roads: Road[]) {
+    for (const road of roads) {
+      const [min, max] = road.bounds;
+      const left = Math.floor(min[0] / this.size), bottom = Math.floor(min[1] / this.size);
+      const right = Math.floor(max[0] / this.size), top = Math.floor(max[1] / this.size);
+      this.extent = [Math.min(this.extent[0], left), Math.min(this.extent[1], bottom),
+        Math.max(this.extent[2], right), Math.max(this.extent[3], top)];
+      for (let x = left; x <= right; x++) for (let y = bottom; y <= top; y++) {
+        const key = `${x}:${y}`;
+        const cell = this.cells.get(key);
+        if (cell) cell.push(road); else this.cells.set(key, [road]);
+      }
+    }
+  }
+
+  query([min, max]: RoadBounds, tier: number): Road[] {
+    const found = new Set<Road>();
+    const left = Math.max(this.extent[0], Math.floor(min[0] / this.size));
+    const bottom = Math.max(this.extent[1], Math.floor(min[1] / this.size));
+    const right = Math.min(this.extent[2], Math.floor(max[0] / this.size));
+    const top = Math.min(this.extent[3], Math.floor(max[1] / this.size));
+    for (let x = left; x <= right; x++) for (let y = bottom; y <= top; y++) {
+      for (const road of this.cells.get(`${x}:${y}`) ?? []) {
+        if (road.tier <= tier && road.bounds[1][0] >= min[0] && road.bounds[0][0] <= max[0]
+          && road.bounds[1][1] >= min[1] && road.bounds[0][1] <= max[1]) found.add(road);
+      }
+    }
+    return [...found];
+  }
+}
 const tiers: Record<string, number> = {
   motorway: 0, motorway_link: 0, trunk: 0, trunk_link: 0, primary: 0, primary_link: 0,
   secondary: 1, secondary_link: 1, tertiary: 1, tertiary_link: 1,
@@ -29,14 +90,6 @@ export const parseRoads = (raw: unknown): Road[] => {
       bounds: [[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]] as [Coordinate, Coordinate]}];
   });
 };
-
-export const visibleRoads = (roads: Road[], tier: number, project: (point: Coordinate) => number[], width: number, height: number) =>
-  roads.filter(road => {
-    if (road.tier > tier) return false;
-    const [left, bottom] = project(road.bounds[0]);
-    const [right, top] = project(road.bounds[1]);
-    return right >= 0 && left <= width && bottom >= 0 && top <= height;
-  });
 
 // Select road names in screen space, avoiding repeated names, overlaps and company markers.
 export const roadLabels = (roads: Road[], project: (point: Coordinate) => number[], width: number, height: number,

@@ -6,22 +6,22 @@ import {desktop} from '@/common/desktop/client';
 import shanghai from '@/company/assets/shanghai.json';
 import {collectLocations, districts, isAreaOnly, normalizeAddress, precisionLabel,
   type LocationPosition, type MapLocation, type PostingLocation} from '@/company/map/locations';
-import {parseRoads, roadLabels, roadLevelLabel, roadTier, visibleRoads, type Coordinate, type Road, type RoadLabel} from '@/company/map/roads';
+import {parseRoads, projectMercator, unprojectMercator, RoadIndex, roadLabels, roadLevelLabel, roadPixel,
+  roadTier, roadTransform, roadCoordinate, type Coordinate, type RoadLabel, type RoadTransform} from '@/company/map/roads';
+import {RoadLayer} from '@/company/map/roadLayer';
+import {parseMetro, type MetroData, type MetroLabel} from '@/company/map/metro';
+import {MetroLayer} from '@/company/map/metroLayer';
 import type {Company} from '@/common/model/domain';
-import {LinesChart, ScatterChart} from 'echarts/charts';
+import {ScatterChart} from 'echarts/charts';
 import {GeoComponent, TooltipComponent} from 'echarts/components';
 import {init, registerMap, use, type EChartsType} from 'echarts/core';
 import {CanvasRenderer} from 'echarts/renderers';
 import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from 'vue';
 
-use([LinesChart, ScatterChart, GeoComponent, TooltipComponent, CanvasRenderer]);
+use([ScatterChart, GeoComponent, TooltipComponent, CanvasRenderer]);
 registerMap('shanghai-workplaces', shanghai as unknown as Parameters<typeof registerMap>[1]);
 // North-up Mercator coordinates; the same projection is used for boundaries, markers and focus.
-const radians = Math.PI / 180;
-const projection = {
-  project: ([longitude, latitude]: number[]) => [longitude * radians, -Math.log(Math.tan(Math.PI / 4 + latitude * radians / 2))],
-  unproject: ([x, y]: number[]) => [x / radians, (2 * Math.atan(Math.exp(-y)) - Math.PI / 2) / radians],
-};
+const projection = {project: projectMercator, unproject: unprojectMercator};
 const props = defineProps<{companies: Company[]}>();
 const emit = defineEmits<{edit: [company: Company]; postings: [company: Company]}>();
 const canvas = ref<HTMLDivElement>();
@@ -45,11 +45,26 @@ const roadsVisible = ref(true);
 const roadsLoading = ref(false);
 const roadsError = ref('');
 const roadsCount = ref(0);
+const roadVisibleCount = ref(0);
+const roadVertexCount = ref(0);
 const currentRoadTier = ref(0);
 const labels = ref<RoadLabel[]>([]);
-let roads: Road[] = [];
+const metroVisible = ref(false);
+const metroLoading = ref(false);
+const metroError = ref('');
+const metroLabels = ref<MetroLabel[]>([]);
+const metroSegmentCount = ref(0);
+const metroStationCount = ref(0);
+let metroData: MetroData | undefined;
+let metroLayer: MetroLayer | undefined;
+let metroController: AbortController | undefined;
+let metroLabelFrame: {transform: RoadTransform; labels: MetroLabel[]} | undefined;
+let roadIndex: RoadIndex | undefined;
+let roadLayer: RoadLayer | undefined;
+let labelFrame: {transform: RoadTransform; labels: RoadLabel[]} | undefined;
 let roadController: AbortController | undefined;
 let roadTimer: ReturnType<typeof setTimeout> | undefined;
+let roadFrame: number | undefined;
 let chart: EChartsType | undefined;
 let observer: ResizeObserver | undefined;
 let disposed = false;
@@ -82,30 +97,55 @@ const groups = computed(() => {
   return [...groups.values()];
 });
 
-const roadStyles = [
-  {color: '#d0b588', width: 1.5}, {color: '#d8cbb0', width: 1.1},
-  {color: '#d2d6c9', width: 0.9}, {color: '#dcdfd6', width: 0.7},
-];
-const roadSeries = (entries: Road[] = []) => roadStyles.map((style, tier) => ({
-  id: `roads-${tier}`, type: 'lines', coordinateSystem: 'geo', polyline: true, silent: true,
-  z: 1, progressive: 0, animation: false, lineStyle: {...style, opacity: 1},
-  data: entries.filter(road => road.tier === tier).map(road => ({coords: road.coordinates})),
-}));
+const moveRoads = () => {
+  if (!chart || disposed) return;
+  const transform = roadTransform(coordinate => chart!.convertToPixel({geoIndex: 0}, coordinate) as number[]);
+  roadLayer?.move(transform, chart.getWidth(), chart.getHeight());
+  metroLayer?.move(transform, chart.getWidth(), chart.getHeight());
+  if (labelFrame) {
+    const old = labelFrame.transform;
+    labels.value = labelFrame.labels.map(label => ({name: label.name,
+      x: (label.x - old.x) / old.scaleX * transform.scaleX + transform.x,
+      y: (label.y - old.y) / old.scaleY * transform.scaleY + transform.y}));
+  }
+  if (metroLabelFrame) {
+    const old = metroLabelFrame.transform;
+    metroLabels.value = metroLabelFrame.labels.map(label => ({...label,
+      x: (label.x - old.x) / old.scaleX * transform.scaleX + transform.x,
+      y: (label.y - old.y) / old.scaleY * transform.scaleY + transform.y}));
+  }
+};
 const refreshRoads = () => {
   if (!chart || disposed) return;
   const geo = (chart.getOption().geo as {zoom?: number}[] | undefined)?.[0];
   if (!geo) return;
   currentRoadTier.value = roadTier(geo.zoom ?? 1);
-  const project = (coordinate: Coordinate) => chart!.convertToPixel({geoIndex: 0}, coordinate) as number[];
-  const entries = roadsVisible.value ? visibleRoads(roads, currentRoadTier.value, project, chart.getWidth(), chart.getHeight()) : [];
-  chart.setOption({series: roadSeries(entries)});
+  const width = chart.getWidth(), height = chart.getHeight();
+  const transform = roadTransform(coordinate => chart!.convertToPixel({geoIndex: 0}, coordinate) as number[]);
+  const project = (coordinate: Coordinate) => roadPixel(transform, coordinate);
+  const a = roadCoordinate(transform, [0, 0]);
+  const b = roadCoordinate(transform, [width, height]);
+  const entries = roadsVisible.value ? roadIndex?.query([[Math.min(a[0], b[0]), Math.min(a[1], b[1])],
+    [Math.max(a[0], b[0]), Math.max(a[1], b[1])]], currentRoadTier.value) ?? [] : [];
+  const stats = roadLayer?.setRoads(entries, transform, width, height);
+  roadVisibleCount.value = stats?.visible ?? 0;
+  roadVertexCount.value = stats?.vertices ?? 0;
+  roadLayer?.move(transform, width, height);
   const markers = groups.value.map(group => project([group[0].longitude!, group[0].latitude!]));
-  labels.value = roadLabels(entries, project, chart.getWidth(), chart.getHeight(), markers);
+  const metro = metroLayer?.update(metroVisible.value ? metroData : undefined, transform, width, height,
+    geo.zoom ?? 1, markers);
+  metroLabels.value = metro?.labels ?? [];
+  metroSegmentCount.value = metro?.segments ?? 0;
+  metroStationCount.value = metro?.stations ?? 0;
+  metroLabelFrame = {transform, labels: metroLabels.value};
+  labels.value = roadLabels(entries, project, width, height,
+    [...markers, ...metroLabels.value.map(label => [label.x, label.y])]);
+  labelFrame = {transform, labels: labels.value};
 };
 const scheduleRoads = () => {
-  clearTimeout(roadTimer);
-  // Coalesce wheel/pan events; geometry is moved by ECharts immediately, then the viewport is refilled.
-  roadTimer = setTimeout(refreshRoads, 80);
+  if (roadFrame == null) roadFrame = requestAnimationFrame(() => { roadFrame = undefined; moveRoads(); });
+  // Refill at most once per 150 ms during a continuous drag; transforms stay frame-synchronous.
+  if (roadTimer == null) roadTimer = setTimeout(() => { roadTimer = undefined; refreshRoads(); }, 150);
 };
 const loadRoads = async () => {
   roadController?.abort();
@@ -118,13 +158,30 @@ const loadRoads = async () => {
     const entries = parseRoads(await response.json());
     if (disposed) return;
     if (!entries.length) throw new Error('道路文件没有可显示的道路');
-    roads = entries;
-    roadsCount.value = roads.length;
+    roadIndex = new RoadIndex(entries);
+    roadsCount.value = entries.length;
     refreshRoads();
   } catch (failure) {
     if (!disposed && !(failure instanceof DOMException && failure.name === 'AbortError')) roadsError.value = '本地道路加载失败，可重试；公司地点仍可查看';
   } finally {
     if (!disposed) roadsLoading.value = false;
+  }
+};
+const loadMetro = async () => {
+  metroController?.abort();
+  const controller = new AbortController();
+  metroController = controller;
+  metroLoading.value = true; metroError.value = '';
+  try {
+    const response = await fetch(new URL('../assets/shanghai-metro.geojson', import.meta.url), {signal: controller.signal});
+    if (!response.ok) throw new Error('地铁文件加载失败');
+    const data = parseMetro(await response.json());
+    if (disposed || controller !== metroController) return;
+    metroData = data; refreshRoads();
+  } catch (failure) {
+    if (!disposed && !controller.signal.aborted) metroError.value = '本地地铁加载失败，可重试；公司地点仍可查看';
+  } finally {
+    if (!disposed && controller === metroController) metroLoading.value = false;
   }
 };
 const render = (reset = false) => {
@@ -162,7 +219,7 @@ const render = (reset = false) => {
           itemStyle: {color: active ? '#d18422' : area ? '#8b95a5' : '#2e7763', borderColor: '#fff', borderWidth: 2, opacity: 0.95},
         };
       }),
-    }, ...roadSeries()],
+    }],
   }, true);
   refreshRoads();
 };
@@ -243,9 +300,16 @@ const openEvidence = async (row: AddressDiscovery) => {
 watch([filtered, selected, selectedCompanyId], () => render(), {deep: true});
 watch([search, district, status], clearSelection);
 watch(roadsVisible, refreshRoads);
+watch(metroVisible, visible => {
+  if (visible && !metroData && !metroLoading.value) void loadMetro();
+  refreshRoads();
+});
+
 onMounted(async () => {
   if (canvas.value) {
     chart = init(canvas.value);
+    roadLayer = new RoadLayer(chart);
+    metroLayer = new MetroLayer(chart);
     chart.on('georoam', scheduleRoads);
     chart.on('click', raw => {
       const params = raw as {componentType?: string; name?: string; data?: {locations?: MapLocation[]}};
@@ -262,7 +326,9 @@ onMounted(async () => {
   await Promise.all([load(), loadRoads()]);
 });
 onBeforeUnmount(() => {
-  disposed = true; pauseResolving(); roadController?.abort(); clearTimeout(roadTimer); observer?.disconnect(); chart?.dispose();
+  disposed = true; pauseResolving(); roadController?.abort(); metroController?.abort(); clearTimeout(roadTimer);
+  if (roadFrame != null) cancelAnimationFrame(roadFrame);
+  observer?.disconnect(); roadLayer?.dispose(); metroLayer?.dispose(); chart?.dispose();
 });
 </script>
 
@@ -272,6 +338,7 @@ onBeforeUnmount(() => {
       <div><h2>上海工作地点</h2><p>一家公司可以有多个办公点，公司资料与 JD 地址一起展示。</p></div>
       <div class="map-actions">
         <el-switch v-model="roadsVisible" active-text="道路" aria-label="显示道路" />
+        <el-switch v-model="metroVisible" active-text="地铁" aria-label="显示地铁" />
         <el-button @click="addressTasksVisible = true">地址查询任务</el-button>
         <el-button v-if="resolving" @click="pauseResolving">暂停定位 {{ resolvedCount }}/{{ totalToResolve }}</el-button>
         <el-button v-else :disabled="loading || !!error" @click="resolveAddresses">匹配地图坐标</el-button>
@@ -297,11 +364,17 @@ onBeforeUnmount(() => {
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon><el-button link @click="load">重新加载</el-button></el-alert>
     <el-alert v-if="geocodeError" :title="geocodeError" type="warning" :closable="false" show-icon />
     <el-alert v-if="roadsError" :title="roadsError" type="warning" :closable="false" show-icon><el-button link @click="loadRoads">重试道路</el-button></el-alert>
+    <el-alert v-if="metroVisible && metroError" :title="metroError" type="warning" :closable="false" show-icon><el-button link @click="loadMetro">重试地铁</el-button></el-alert>
     <div v-loading="loading" class="map-layout">
       <div class="map-surface">
-        <div ref="canvas" class="map-canvas" role="img" aria-label="上海市公司工作地点地图，可拖动与缩放" />
+        <div ref="canvas" class="map-canvas" role="img" aria-label="上海市公司工作地点地图，可拖动与缩放"
+          :data-road-visible-count="roadVisibleCount" :data-road-vertex-count="roadVertexCount"
+          :data-metro-segment-count="metroSegmentCount" :data-metro-station-count="metroStationCount" />
         <div class="map-north" aria-label="正北朝上">↑ 北</div>
         <div class="road-labels" aria-hidden="true"><span v-for="label in labels" :key="label.name" class="road-label" :style="{left: `${label.x}px`, top: `${label.y}px`}">{{ label.name }}</span></div>
+        <div class="metro-labels" aria-hidden="true"><span v-for="label in metroLabels" :key="label.key"
+          class="metro-label" :class="{'metro-station-label': label.station}"
+          :style="{left: `${label.x}px`, top: `${label.y}px`, color: label.color}">{{ label.name }}</span></div>
         <div class="map-zoom"><button aria-label="放大地图" @click="zoomMap(1.6)">＋</button><button aria-label="缩小地图" @click="zoomMap(1 / 1.6)">−</button></div>
         <div class="map-tip"><span class="road-status" role="status" :data-road-tier="currentRoadTier" :data-road-count="roadsCount">{{ roadsLoading ? '本地路网加载中…' : roadsError ? '本地路网未加载' : !roadsVisible ? '道路已隐藏' : `本地路网 · ${roadLevelLabel(currentRoadTier)}` }}</span><br/>滚轮缩放 · 拖动平移 · 点击标记查看地点<br/>灰色菱形仅表示所在区域，不代表实际办公楼。</div>
       </div>
@@ -330,6 +403,10 @@ onBeforeUnmount(() => {
 .map-north { position: absolute; right: 20px; top: 18px; color: #526b5c; font-size: 13px; font-weight: 700; pointer-events: none; }
 .road-labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .road-label { position: absolute; transform: translate(-50%, -50%); font-size: 11px; line-height: 18px; white-space: nowrap; color: #837b67; text-shadow: 1px 0 #fafbf7, -1px 0 #fafbf7, 0 1px #fafbf7, 0 -1px #fafbf7; }
+.metro-labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.metro-label { position: absolute; transform: translateY(-50%); padding: 0 4px; border: 1px solid currentColor; border-radius: 4px; background: #ffffffed; font-size: 11px; font-weight: 700; line-height: 18px; white-space: nowrap; }
+.metro-station-label { border: 0; padding: 0 2px; background: #ffffffe0; font-weight: 400; }
+.metro-loading { margin: 8px 24px 0; font-size: 12px; color: #67756b; }
 .map-zoom { position: absolute; right: 16px; top: 52px; display: grid; border: 1px solid #dfe4db; border-radius: 6px; overflow: hidden; button { width: 32px; height: 32px; border: 0; background: #fff; color: #42614e; font-size: 20px; cursor: pointer; &:hover { background: #edf2eb; } + button { border-top: 1px solid #e5e9e1; } } }
 .road-status { color: #536a5c; }
 .workplace-panel { background: #fff; border: 1px solid #dfe4db; border-radius: 16px; overflow: hidden; }

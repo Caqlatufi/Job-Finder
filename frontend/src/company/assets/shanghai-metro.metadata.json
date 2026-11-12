@@ -1,0 +1,198 @@
+{
+  "source": "https://overpass-api.de/api/interpreter",
+  "query": "[out:json][timeout:60];relation[\"network:en\"=\"Shanghai Metro\"][\"type\"=\"route\"][\"route\"~\"subway|light_rail\"](30.65,120.85,31.9,122.2)->.r;(.r;node(r.r););out geom;",
+  "sourceTimestamp": "2026-11-06T08:57:51Z",
+  "generatedAt": "2026-11-06T08:59:34.725860+00:00",
+  "sourceSha256": "fc035c5a5b8d789865eea7c9df0c2925dbcf9354abd99c26d682680a72eb35eb",
+  "outputSha256": "0355a562f0d06d4f668215092a6e98388b8af59cb8d38dfa6fca9836a6ff8e33",
+  "license": "https://opendatacommons.org/licenses/odbl/1-0/",
+  "attribution": "© OpenStreetMap contributors",
+  "coordinateSystem": "WGS84",
+  "lineCount": 19,
+  "stationCount": 414,
+  "lines": [
+    {
+      "ref": "1",
+      "name": "1号线",
+      "color": "#E4002B",
+      "relations": [
+        199200,
+        6800210,
+        14974356,
+        14974357
+      ]
+    },
+    {
+      "ref": "2",
+      "name": "2号线",
+      "color": "#97D700",
+      "relations": [
+        5611325,
+        5611326
+      ]
+    },
+    {
+      "ref": "3",
+      "name": "3号线",
+      "color": "#FFD100",
+      "relations": [
+        196738,
+        6817178
+      ]
+    },
+    {
+      "ref": "4",
+      "name": "4号线",
+      "color": "#5F259F",
+      "relations": [
+        196854,
+        7448423
+      ]
+    },
+    {
+      "ref": "5",
+      "name": "5号线",
+      "color": "#AC4FC6",
+      "relations": [
+        214779,
+        6806163,
+        9170631,
+        9170632
+      ]
+    },
+    {
+      "ref": "6",
+      "name": "6号线",
+      "color": "#D9017A",
+      "relations": [
+        214736,
+        6840915
+      ]
+    },
+    {
+      "ref": "7",
+      "name": "7号线",
+      "color": "#FF6900",
+      "relations": [
+        6819599,
+        6819600
+      ]
+    },
+    {
+      "ref": "8",
+      "name": "8号线",
+      "color": "#009FDF",
+      "relations": [
+        196737,
+        7451832
+      ]
+    },
+    {
+      "ref": "9",
+      "name": "9号线",
+      "color": "#71C5E8",
+      "relations": [
+        214629,
+        7451834
+      ]
+    },
+    {
+      "ref": "10",
+      "name": "10号线",
+      "color": "#C1A7E2",
+      "relations": [
+        199189,
+        7452116,
+        7452117,
+        7452118
+      ]
+    },
+    {
+      "ref": "11",
+      "name": "11号线",
+      "color": "#76232F",
+      "relations": [
+        5611108,
+        5611109,
+        5611110,
+        5611111
+      ]
+    },
+    {
+      "ref": "12",
+      "name": "12号线",
+      "color": "#007B5F",
+      "relations": [
+        5498699,
+        7451886
+      ]
+    },
+    {
+      "ref": "13",
+      "name": "13号线",
+      "color": "#EF95CF",
+      "relations": [
+        214631,
+        7451888
+      ]
+    },
+    {
+      "ref": "14",
+      "name": "14号线",
+      "color": "#827a04",
+      "relations": [
+        10557250,
+        10557251
+      ]
+    },
+    {
+      "ref": "15",
+      "name": "15号线",
+      "color": "#BBA786",
+      "relations": [
+        12231216,
+        12231217
+      ]
+    },
+    {
+      "ref": "16",
+      "name": "16号线",
+      "color": "#2CD5C4",
+      "relations": [
+        5178631,
+        6803856,
+        10241348,
+        10241349,
+        13618691,
+        13618692
+      ]
+    },
+    {
+      "ref": "17",
+      "name": "17号线",
+      "color": "#C09C83",
+      "relations": [
+        6325787,
+        7845846
+      ]
+    },
+    {
+      "ref": "18",
+      "name": "18号线",
+      "color": "#d6a461",
+      "relations": [
+        10095916,
+        10095917
+      ]
+    },
+    {
+      "ref": "浦江",
+      "name": "浦江线",
+      "color": "#999999",
+      "relations": [
+        8167020,
+        8167021
+      ]
+    }
+  ]
+}
