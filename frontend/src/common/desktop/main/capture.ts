@@ -159,8 +159,10 @@ export class VisualCapture {
       this.searchTarget = undefined;
       const contents = target.view.webContents;
       const press = (key: string) => {
-        const keyCode = key === 'ZoomIn' ? '+' : key === 'ZoomOut' ? '-' : key === 'ZoomReset' ? '0' : key === 'SelectAll' ? 'A' : key.replace('Arrow', '');
-        const modifiers: ('control' | 'meta')[] = key === 'SelectAll' || key.startsWith('Zoom') ? [process.platform === 'darwin' ? 'meta' : 'control'] : [];
+        // Native selection works without a foreground window handling the Ctrl+A accelerator.
+        if (key === 'SelectAll') { contents.selectAll(); return; }
+        const keyCode = key === 'ZoomIn' ? '+' : key === 'ZoomOut' ? '-' : key === 'ZoomReset' ? '0' : key.replace('Arrow', '');
+        const modifiers: ('control' | 'meta')[] = key.startsWith('Zoom') ? [process.platform === 'darwin' ? 'meta' : 'control'] : [];
         contents.sendInputEvent({type: 'keyDown', keyCode, modifiers});
         if (key === 'Enter') contents.sendInputEvent({type: 'char', keyCode: '\r'});
         contents.sendInputEvent({type: 'keyUp', keyCode, modifiers});

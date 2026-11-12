@@ -17,7 +17,7 @@ async function fixture() {
       <meta charset="utf-8"><title>自动收录岗位</title>
       <style>body{margin:0;background:rgb(20,80,140);font:24px sans-serif;color:white}h1{margin:20px}input{caret-color:transparent}
       #panel{height:260px;overflow:auto;background:#eee;color:#111}p{margin:0;height:180px}</style>
-      <h1>Go 工程师</h1><input aria-label="手动验证"><button onclick="document.cookie='fixtureLogin=ready;path=/';document.querySelector('h1').textContent='验证完成'">完成验证</button>
+      <h1>Go 工程师</h1><input aria-label="手动验证" onkeydown="if(event.key==='Enter')this.dataset.submitted=this.value"><button onclick="document.cookie='fixtureLogin=ready;path=/';document.querySelector('h1').textContent='验证完成'">完成验证</button>
       <div id="panel"><p>职责一 Go 开发</p><p>职责二 Vue 管理界面</p><p>任职要求 MySQL</p><p>正文结束</p></div>`,
       {headers: {'Content-Type': 'text/html;charset=utf-8'}}));
   });
@@ -74,10 +74,6 @@ test('后台收录截图与嵌套滚动不切标签、不改输入焦点，失�
     expect(switched, JSON.stringify(switched)).toHaveProperty('ok', true);
     await expect.poll(() => target.locator('#panel').evaluate(el => el.scrollTop)).toBe(300);
     await target.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    const fresh = await capture();
-    for (const action of ['click', 'type', 'key']) {
-      expect((await request(action, {key, captureId: fresh.captureId})).error.code).toBe('WORKFLOW_REJECTED');
-    }
     await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].blur());
     await capture();
     await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].minimize());
@@ -106,6 +102,90 @@ test('后台收录截图与嵌套滚动不切标签、不改输入焦点，失�
     expect((await request('capture', {key})).error.code).toBe('TAB_NOT_FOUND');
   } finally { await app.close(); }
 });
+
+for (const platform of ['BOSS', 'WEB']) {
+  test(platform + ' 离屏任务原生点击、中文输入与按键不切标签、不抢焦点，失焦/最小化/隐藏仍可操作（隔离夹具）', async () => {
+    const {app, request, ipc, ready} = await fixture();
+    try {
+      await request('open');
+      const original = (await request('tabs')).data[0];
+      await ready(original.key);
+      const external = app.context().pages().find(p => p.url() === original.url)!;
+      await external.locator('input').fill('用户继续编辑');
+      const key = 'jd-import:00000000-0000-0000-0000-00000000000' + (platform === 'BOSS' ? '5' : '6');
+      const url = 'https://www.zhipin.com/job_detail/background-' + platform + '.html';
+      const act = (action: string, payload: object = {}) => request(action, {key, ...payload}, platform);
+      expect((await act('openJob', {url})).ok).toBe(true);
+      await ready(key);
+      const target = app.context().pages().find(p => p.url() === url)!;
+      // Local fixture geometry/DOM assertions never enter the production screenshot-only workflow.
+      const point = await target.locator('input').evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        return {x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2)};
+      });
+      let stateLabel = 'opening';
+      const capture = async () => {
+        const result = await act('capture');
+        if (!result.ok) throw new Error(platform + '/' + stateLabel + ': ' + JSON.stringify(result));
+        expect(result, JSON.stringify(result)).toHaveProperty('ok', true);
+        return result.data;
+      };
+      const input = async (action: string, payload: object) => {
+        const ref = await capture();
+        const result = await act(action, {captureId: ref.captureId, ...payload});
+        expect(result, JSON.stringify(result)).toHaveProperty('ok', true);
+        return ref;
+      };
+      for (const state of ['visible', 'blurred', 'minimized', 'hidden']) {
+        stateLabel = state;
+        if (state === 'blurred') {
+          await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].hide());
+          await expect.poll(() => app.evaluate(({BrowserWindow}) => !BrowserWindow.getAllWindows()[0].isVisible())).toBe(true);
+          await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].showInactive());
+        }
+        await app.evaluate(({BrowserWindow}, state) => {
+          const host = BrowserWindow.getAllWindows()[0];
+          if (state === 'minimized') host.minimize();
+          else if (state === 'hidden') host.hide();
+        }, state);
+        await expect.poll(() => app.evaluate(({BrowserWindow}, state) => {
+          const host = BrowserWindow.getAllWindows()[0];
+          return state === 'minimized' ? host.isMinimized() : state === 'hidden' ? !host.isVisible()
+            : state === 'blurred' ? !host.isFocused() : host.isVisible() && !host.isMinimized();
+        }, state)).toBe(true).catch(error => { throw new Error(platform + '/' + state + ': ' + error.message); });
+        await target.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const before = await app.evaluate(({BrowserWindow, webContents}) => {
+          const host = BrowserWindow.getAllWindows()[0];
+          return {focusedId: webContents.getFocusedWebContents()?.id, focused: host.isFocused(),
+            visible: host.isVisible(), minimized: host.isMinimized(), bounds: host.getBounds()};
+        });
+        const unselected = await capture();
+        expect((await act('type', {captureId: unselected.captureId, text: '禁止无目标输入'})).error.code).toBe('SEARCH_TARGET_REQUIRED');
+        const clicked = await input('click', {...point, intent: 'searchControl'});
+        expect((await act('click', {captureId: clicked.captureId, ...point, intent: 'searchControl'})).error.code).toBe('STALE_CAPTURE');
+        const text = platform + '-' + state + '-中文搜索';
+        await input('type', {text, replace: true});
+        await expect(target.locator('input')).toHaveValue(text);
+        await input('key', {keyCode: 'SelectAll'});
+        await input('key', {keyCode: 'Backspace'});
+        await expect(target.locator('input')).toHaveValue('');
+        await input('type', {text: '重新输入'});
+        await input('key', {keyCode: 'Enter'});
+        await expect(target.locator('input')).toHaveAttribute('data-submitted', '重新输入');
+        const afterSubmit = await capture();
+        expect((await act('type', {captureId: afterSubmit.captureId, text: '提交后需重新点击'})).error.code).toBe('SEARCH_TARGET_REQUIRED');
+        expect(await app.evaluate(({BrowserWindow, webContents}) => {
+          const host = BrowserWindow.getAllWindows()[0];
+          return {focusedId: webContents.getFocusedWebContents()?.id, focused: host.isFocused(),
+            visible: host.isVisible(), minimized: host.isMinimized(), bounds: host.getBounds()};
+        })).toEqual(before);
+        expect((await ipc('browser.list')).data.find((tab: any) => tab.active).key).toBe(original.key);
+        await expect(external.locator('input')).toHaveValue('用户继续编辑');
+        expect(await external.evaluate(() => document.activeElement?.tagName)).toBe('INPUT');
+      }
+    } finally { await app.close(); }
+  });
+}
 
 test('通用官网详情后台截图保留岗位查询参数，不切标签，并复用同站会话（隔离夹具）', async () => {
   const {app, request, ipc} = await fixture();
@@ -169,6 +249,9 @@ test('手动打开收录标签可完成验证，返回工作台后后台接续�
     await ready(key);
     expect((await request('tabs')).data.find((t: any) => t.key === key).active).toBe(true);
     expect((await request('capture', {key})).error.code).toBe('TARGET_IN_USE');
+    for (const action of ['click', 'type', 'key']) {
+      expect((await request(action, {key, captureId: before.data.captureId})).error.code).toBe('TARGET_IN_USE');
+    }
     const interactive = app.context().pages().find(p => p.url() === url)!;
     expect(await app.evaluate(({webContents}, url) => webContents.getAllWebContents().find(w => w.getURL() === url)!.isOffscreen(), url)).toBe(false);
     await interactive.locator('input').fill('用户手动验证');

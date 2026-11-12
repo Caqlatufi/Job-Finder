@@ -27,6 +27,7 @@ export class BrowserWindows {
   private popupSequence = 0;
   private disposing = false;
   private visualEpoch = 0;
+  private contentSize?: [number, number];
   private readonly backgroundWorkflow = process.env.JD_DESKTOP_BACKGROUND_WORKFLOW === 'true';
   constructor(private readonly emit: (state: BrowserState) => void, private readonly allowLocalHttp: boolean,
               private readonly shell: BrowserShell, private readonly adapters: PlatformAdapter[] = []) {
@@ -60,7 +61,10 @@ export class BrowserWindows {
   }
   private layout() {
     if (!this.host || this.host.isDestroyed()) return;
-    const [width, height] = this.host.getContentSize();
+    const size = this.host.getContentSize();
+    // Windows can report an empty client area while minimized; task views must keep rendering.
+    if (!this.host.isMinimized() && size[0] > 0 && size[1] > TOOLBAR_HEIGHT) this.contentSize = [size[0], size[1]];
+    const [width, height] = this.contentSize || size;
     this.shell.workbench.setBounds({x: 0, y: TOOLBAR_HEIGHT, width, height: Math.max(0, height - TOOLBAR_HEIGHT)});
     this.shell.workbench.setVisible(this.activeKey === WORKBENCH_KEY);
     for (const [key, entry] of this.entries) {
@@ -315,7 +319,7 @@ export class BrowserWindows {
     } catch { return undefined; }
   }
   platforms(): PlatformDefinition[] { return this.adapters.map(definition => ({...definition})); }
-  visualTarget(request: CaptureRequest, action?: VisualAction['action']): VisualTarget {
+  visualTarget(request: CaptureRequest, _action?: VisualAction['action']): VisualTarget {
     const entry = this.entries.get(request.key);
     if (!entry || entry.view.webContents.isDestroyed()) throw new PlatformOperationError('TAB_NOT_FOUND', '目标平台标签不存在');
     const contents = entry.view.webContents;
@@ -326,8 +330,6 @@ export class BrowserWindows {
     if (entry.backgroundJob && !entry.offscreen)
       throw new PlatformOperationError('TARGET_IN_USE', '收录标签已由你打开，请处理网页后返回工作台继续收录');
     const background = entry.backgroundJob && entry.offscreen;
-    if (background && action && action !== 'scroll')
-      throw new PlatformOperationError('WORKFLOW_REJECTED', '后台收录只允许截图和滚动');
     if (!background && (!host.isVisible() || host.isMinimized() || request.key !== this.activeKey))
       throw new PlatformOperationError('TARGET_NOT_VISIBLE', '请先打开或返回目标平台标签');
     if (!background && !this.backgroundWorkflow && !host.isFocused()) throw new PlatformOperationError('TARGET_NOT_FOCUSED', '客户端未聚焦，请重新返回平台');
