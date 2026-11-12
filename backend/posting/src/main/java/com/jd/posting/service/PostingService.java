@@ -39,6 +39,35 @@ public class PostingService {
     private final com.jd.company.service.CompanyAddressDiscoveryService addressDiscoveries;
 
     @Transactional
+    public PostingDtos.Response recordAddressLookup(Long id, PostingDtos.AddressLookupRequest request) {
+        JobPosting posting = getEntityForUpdate(id);
+        if (!java.util.Objects.equals(posting.getCompanyId(), request.expectedCompanyId())
+                || !java.util.Objects.equals(posting.getTitle(), request.expectedTitle())
+                || !java.util.Objects.equals(posting.getSourceUrl(), request.expectedSourceUrl())) {
+            throw new BusinessException(ErrorCode.CONFLICT, HttpStatus.CONFLICT, "JD公司、岗位或链接已变化，请重新核对");
+        }
+        posting.setAddressLookupStatus(request.status());
+        posting.setAddressLookupMessage(request.message().trim());
+        posting.setAddressLookupCheckedAt(java.time.LocalDateTime.now());
+        posting.setAddressLookupSourceUrl(request.expectedSourceUrl());
+        posting.setAddressLookupEvidence(request.evidence().trim());
+        return toResponse(repository.save(posting));
+    }
+
+    private void clearAddressLookup(JobPosting posting) {
+        posting.setAddressLookupStatus(null);
+        posting.setAddressLookupMessage(null);
+        posting.setAddressLookupCheckedAt(null);
+        posting.setAddressLookupSourceUrl(null);
+        posting.setAddressLookupEvidence(null);
+    }
+
+    private Sort postingOrder(PostingEnums.SortBy sortBy) {
+        if (sortBy == PostingEnums.SortBy.BOSS_COMPETITION) return Sort.unsorted();
+        return sortBy == PostingEnums.SortBy.LATEST ? Sort.by(Sort.Direction.DESC, "createdAt", "id") : SCORE_ORDER;
+    }
+
+    @Transactional
     public com.jd.company.model.CompanyAddressDtos.Response saveDiscoveredAddress(Long id,
             com.jd.company.model.CompanyAddressDtos.SaveRequest request) {
         var posting = repository.findByIdForUpdate(id).orElseThrow(() ->
@@ -51,6 +80,11 @@ public class PostingService {
             throw new BusinessException(ErrorCode.CONFLICT, HttpStatus.CONFLICT, "JD地址已被修改，请重新核对");
         var result = addressDiscoveries.record(posting.getCompanyId(), posting.getId(), request);
         posting.setLocation(result.address());
+        posting.setAddressLookupStatus("SUCCEEDED");
+        posting.setAddressLookupMessage("已补全 JD 工作地址");
+        posting.setAddressLookupCheckedAt(java.time.LocalDateTime.now());
+        posting.setAddressLookupSourceUrl(request.expectedPostingUrl());
+        posting.setAddressLookupEvidence(request.evidenceText());
         repository.save(posting);
         return result;
     }
@@ -68,7 +102,7 @@ public class PostingService {
             int size
     ) {
         PageRequest pageable = PageRequest.of(Math.max(0, number - 1), Math.min(Math.max(size, 1), 100),
-                sortBy == PostingEnums.SortBy.BOSS_COMPETITION ? Sort.unsorted() : SCORE_ORDER);
+                postingOrder(sortBy));
         return repository.findAll(orderedSpecification(
                         specification(keyword, directions, tiers, stages, companyId, resumeVersionId), sortBy), pageable)
                 .map(this::toResponse);
@@ -85,7 +119,7 @@ public class PostingService {
     ) {
         return repository.findAll(orderedSpecification(
                         specification(keyword, directions, tiers, stages, companyId, null), sortBy),
-                        sortBy == PostingEnums.SortBy.BOSS_COMPETITION ? Sort.unsorted() : SCORE_ORDER)
+                        postingOrder(sortBy))
                 .stream().map(this::toResponse).toList();
     }
 
@@ -173,7 +207,10 @@ public class PostingService {
         if (findSource(url).stream().anyMatch(existing -> !existing.id().equals(id))) {
             throw new BusinessException(ErrorCode.CONFLICT, HttpStatus.CONFLICT, "该链接已用于其他 JD，请核对岗位");
         }
-        if (!url.equals(previous)) clearBossCompetition(posting);
+        if (!url.equals(previous)) {
+            clearBossCompetition(posting);
+            clearAddressLookup(posting);
+        }
         posting.setSourceUrl(url);
         return toResponse(repository.save(posting));
     }
@@ -315,7 +352,9 @@ public class PostingService {
                 posting.getTotalScore(), posting.getTier(), posting.getRecommendation(),
                 posting.getManualOverrideReason(), posting.getStage(), posting.getResumeVersionId(), resumeName,
                 posting.getAppliedAt(), posting.getNextAction(), posting.getNextActionAt(),
-                posting.getCreatedAt(), posting.getUpdatedAt()
+                posting.getCreatedAt(), posting.getUpdatedAt(), posting.getAddressLookupStatus(),
+                posting.getAddressLookupMessage(), posting.getAddressLookupCheckedAt(),
+                posting.getAddressLookupSourceUrl(), posting.getAddressLookupEvidence()
         );
     }
 
@@ -323,6 +362,11 @@ public class PostingService {
         companyService.getEntity(request.companyId());
         validateRanges(request);
 
+        if (!java.util.Objects.equals(posting.getCompanyId(), request.companyId())
+                || !java.util.Objects.equals(posting.getTitle(), request.title().trim())
+                || !java.util.Objects.equals(posting.getSourceUrl(), trimToNull(request.sourceUrl()))) {
+            clearAddressLookup(posting);
+        }
         posting.setCompanyId(request.companyId());
         posting.setTitle(request.title().trim());
         posting.setDirection(directionService.resolve(request.direction(), request.newDirection()));

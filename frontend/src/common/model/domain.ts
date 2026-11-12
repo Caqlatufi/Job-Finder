@@ -88,6 +88,11 @@ export interface Posting {
   bossCompetitionNote?: string;
   rawJd: string;
   location?: string;
+  addressLookupStatus?: 'SUCCEEDED' | 'JD_CLOSED' | 'NO_ADDRESS' | 'FAILED';
+  addressLookupMessage?: string;
+  addressLookupCheckedAt?: string;
+  addressLookupSourceUrl?: string;
+  addressLookupEvidence?: string;
   salaryMinK?: number;
   salaryMaxK?: number;
   salaryMonths?: number;
@@ -121,7 +126,7 @@ export interface Posting {
   updatedAt: string;
 }
 
-export type PostingSave = Omit<Posting, 'id' | 'companyName' | 'totalScore' | 'tier' | 'recommendation' | 'stage' | 'resumeVersionId' | 'resumeVersionName' | 'appliedAt' | 'nextAction' | 'nextActionAt' | 'createdAt' | 'updatedAt' | 'bossRank' | 'bossCompetitorCount' | 'bossSurpassedPercent' | 'bossCompetitionCheckedAt' | 'bossCompetitionStatus' | 'bossCompetitionNote'> & {
+export type PostingSave = Omit<Posting, 'id' | 'companyName' | 'totalScore' | 'tier' | 'recommendation' | 'stage' | 'resumeVersionId' | 'resumeVersionName' | 'appliedAt' | 'nextAction' | 'nextActionAt' | 'createdAt' | 'updatedAt' | 'bossRank' | 'bossCompetitorCount' | 'bossSurpassedPercent' | 'bossCompetitionCheckedAt' | 'bossCompetitionStatus' | 'bossCompetitionNote' | 'addressLookupStatus' | 'addressLookupMessage' | 'addressLookupCheckedAt' | 'addressLookupSourceUrl' | 'addressLookupEvidence'> & {
   tier?: Tier;
   recommendation?: Recommendation;
 };

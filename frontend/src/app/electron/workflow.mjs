@@ -4,7 +4,7 @@ import path from 'node:path';
 import {localEnvironment} from '../../common/desktop/main/localEnvironment.mjs';
 
 const [platform, action = 'tabs', ...args] = process.argv.slice(2);
-if (!['WEB', 'BOSS', 'LIEPIN', 'JOB51', 'ZHAOPIN'].includes(platform) || !['info', 'open', 'openJob', 'tabs', 'focus', 'inspect', 'read', 'navigate', 'diagnose', 'capture', 'scroll', 'click', 'type', 'key'].includes(action)) {
+if (!['WEB', 'BOSS', 'LIEPIN', 'JOB51', 'ZHAOPIN'].includes(platform) || !['info', 'open', 'openJob', 'close', 'tabs', 'focus', 'inspect', 'read', 'navigate', 'diagnose', 'capture', 'scroll', 'click', 'type', 'key'].includes(action)) {
   console.error('Usage: workflow.mjs PLATFORM open|tabs|focus|navigate [url] [key] OR capture|scroll|click|type|key --key KEY [--capture ID --x N --y N --delta-x N --delta-y N --intent openJob|searchControl|pagination --text TEXT --replace true|false --key-code Enter|SelectAll --batch ID --rect x,y,w,h]');
   process.exit(1);
 }

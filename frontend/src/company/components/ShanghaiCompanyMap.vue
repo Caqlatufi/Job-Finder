@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import {companyApi} from '@/company/api/companyApi';
 import {companyAddressApi, type AddressDiscovery} from '@/company/api/companyAddressApi';
-import CompanyAddressTasks from '@/company/components/CompanyAddressTasks.vue';
-import {desktop} from '@/common/desktop/client';
+import {useCompanyAddressTasks} from '@/company/useCompanyAddressTasks';
+import {intakeFailure} from '@/company/map/intake';
 import shanghai from '@/company/assets/shanghai.json';
-import {collectLocations, districts, isAreaOnly, normalizeAddress, precisionLabel,
+import {collectLocations, districts, isAreaOnly, precisionLabel,
   type LocationPosition, type MapLocation, type PostingLocation} from '@/company/map/locations';
 import {parseRoads, projectMercator, unprojectMercator, RoadIndex, roadLabels, roadLevelLabel, roadPixel,
   roadTier, roadTransform, roadCoordinate, type Coordinate, type RoadLabel, type RoadTransform} from '@/company/map/roads';
@@ -23,19 +23,12 @@ registerMap('shanghai-workplaces', shanghai as unknown as Parameters<typeof regi
 // North-up Mercator coordinates; the same projection is used for boundaries, markers and focus.
 const projection = {project: projectMercator, unproject: unprojectMercator};
 const props = defineProps<{companies: Company[]}>();
-const emit = defineEmits<{edit: [company: Company]; postings: [company: Company]}>();
 const canvas = ref<HTMLDivElement>();
 const postings = ref<PostingLocation[]>([]);
 const positions = ref<LocationPosition[]>([]);
 const discoveries = ref<AddressDiscovery[]>([]);
-const addressTasksVisible = ref(false);
-const addressTasks = ref<InstanceType<typeof CompanyAddressTasks>>();
 const loading = ref(true);
 const error = ref('');
-const geocodeError = ref('');
-const resolving = ref(false);
-const resolvedCount = ref(0);
-const totalToResolve = ref(0);
 const search = ref('');
 const district = ref('');
 const status = ref('');
@@ -68,11 +61,12 @@ let roadFrame: number | undefined;
 let chart: EChartsType | undefined;
 let observer: ResizeObserver | undefined;
 let disposed = false;
-let resolveRun = 0;
 const getErrorMessage = (failure: unknown, fallback: string) => failure instanceof Error ? failure.message : fallback;
 
 const locations = computed(() => collectLocations(props.companies, postings.value, positions.value, discoveries.value));
 const shanghaiLocations = computed(() => locations.value.filter(location => location.precision !== 'OUTSIDE'));
+const companiesWithAddress = computed(() => new Set(shanghaiLocations.value
+  .filter(location => !isAreaOnly(location.address)).map(location => location.company.id)));
 const outsideCount = computed(() => locations.value.length - shanghaiLocations.value.length);
 const locatedCount = computed(() => shanghaiLocations.value.filter(location => ['MANUAL', 'PLACE'].includes(location.precision)).length);
 const areaCount = computed(() => shanghaiLocations.value.filter(location => location.precision === 'DISTRICT').length);
@@ -239,42 +233,7 @@ const zoomMap = (factor: number) => {
   refreshRoads();
 };
 const resetMap = () => { clearSelection(); render(true); };
-const editLocation = (location: MapLocation) => {
-  const companyLocations = locations.value.filter(item => item.company.id === location.company.id
-    && item.address !== '尚未填写工作地址');
-  emit('edit', {...location.company, workLocations: companyLocations.map(item => ({
-    address: item.address, label: item.label,
-    longitude: item.precision === 'MANUAL' ? item.longitude : undefined,
-    latitude: item.precision === 'MANUAL' ? item.latitude : undefined,
-  }))});
-};
 
-const resolveAddresses = async () => {
-  const run = ++resolveRun;
-  resolving.value = true;
-  geocodeError.value = '';
-  const cached = new Set(positions.value.filter(position => position.longitude != null && position.latitude != null)
-    .map(position => normalizeAddress(position.address)));
-  const addresses = [...new Set(shanghaiLocations.value.filter(location =>
-    location.precision !== 'MANUAL' && location.precision !== 'PLACE' && !isAreaOnly(location.address)
-    && location.address !== '尚未填写工作地址' && !cached.has(normalizeAddress(location.address))).map(location => location.address))];
-  totalToResolve.value = addresses.length;
-  resolvedCount.value = 0;
-  try {
-    for (const address of addresses) {
-      if (disposed || run !== resolveRun) break;
-      const position = await companyApi.resolvePosition(address);
-      if (disposed || run !== resolveRun) break;
-      positions.value = [...positions.value.filter(item => item.address !== address), position];
-      resolvedCount.value++;
-    }
-  } catch (failure) {
-    if (!disposed && run === resolveRun) geocodeError.value = getErrorMessage(failure, '地址匹配暂不可用，可稍后重试');
-  } finally {
-    if (run === resolveRun) resolving.value = false;
-  }
-};
-const pauseResolving = () => { resolveRun++; resolving.value = false; };
 const load = async () => {
   loading.value = true;
   error.value = '';
@@ -292,10 +251,16 @@ const load = async () => {
     if (!disposed) loading.value = false;
   }
 };
-const openEvidence = async (row: AddressDiscovery) => {
-  try { await desktop.request('browser.open', {key: `company-address-source:${row.id}`, url: row.sourceUrl, title: '地址来源'}); }
-  catch (failure) { geocodeError.value = getErrorMessage(failure, '地址来源打开失败'); }
-};
+const {batch: addressBatch, tasks: addressTasks, busy: addressBusy, active: addressActive, error: addressError,
+  refresh: refreshAddressTasks, start: startAddressBatch, stop: stopAddressBatch} = useCompanyAddressTasks(load);
+const addressFailures = computed(() => {
+  const failures = new Map<number, string>();
+  for (const task of addressTasks.value) {
+    const reason = intakeFailure(task);
+    if (reason && !failures.has(task.companyId)) failures.set(task.companyId, reason);
+  }
+  return failures;
+});
 
 watch([filtered, selected, selectedCompanyId], () => render(), {deep: true});
 watch([search, district, status], clearSelection);
@@ -304,7 +269,6 @@ watch(metroVisible, visible => {
   if (visible && !metroData && !metroLoading.value) void loadMetro();
   refreshRoads();
 });
-
 onMounted(async () => {
   if (canvas.value) {
     chart = init(canvas.value);
@@ -326,7 +290,7 @@ onMounted(async () => {
   await Promise.all([load(), loadRoads()]);
 });
 onBeforeUnmount(() => {
-  disposed = true; pauseResolving(); roadController?.abort(); metroController?.abort(); clearTimeout(roadTimer);
+  disposed = true; roadController?.abort(); metroController?.abort(); clearTimeout(roadTimer);
   if (roadFrame != null) cancelAnimationFrame(roadFrame);
   observer?.disconnect(); roadLayer?.dispose(); metroLayer?.dispose(); chart?.dispose();
 });
@@ -335,13 +299,14 @@ onBeforeUnmount(() => {
 <template>
   <div class="workplace-panel" data-testid="company-shanghai-map">
     <div class="map-heading">
-      <div><h2>上海工作地点</h2><p>一家公司可以有多个办公点，公司资料与 JD 地址一起展示。</p></div>
+      <div><h2>上海工作地点</h2></div>
       <div class="map-actions">
+        <span v-if="addressBatch" class="address-unrecorded" role="status">剩余未收录 {{ addressBatch.unrecorded }} 家</span>
+        <el-button v-if="addressActive" :loading="addressBusy || addressBatch?.status === 'STOPPING'"
+          :disabled="addressBusy || addressBatch?.status === 'STOPPING'" @click="stopAddressBatch">停止收录</el-button>
+        <el-button v-else type="primary" :loading="addressBusy" :disabled="loading || !!error || addressBatch?.unrecorded === 0" @click="startAddressBatch">开始收录地址</el-button>
         <el-switch v-model="roadsVisible" active-text="道路" aria-label="显示道路" />
         <el-switch v-model="metroVisible" active-text="地铁" aria-label="显示地铁" />
-        <el-button @click="addressTasksVisible = true">地址查询任务</el-button>
-        <el-button v-if="resolving" @click="pauseResolving">暂停定位 {{ resolvedCount }}/{{ totalToResolve }}</el-button>
-        <el-button v-else :disabled="loading || !!error" @click="resolveAddresses">匹配地图坐标</el-button>
         <el-button @click="resetMap">全上海</el-button>
       </div>
     </div>
@@ -362,7 +327,7 @@ onBeforeUnmount(() => {
       </el-select>
     </div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon><el-button link @click="load">重新加载</el-button></el-alert>
-    <el-alert v-if="geocodeError" :title="geocodeError" type="warning" :closable="false" show-icon />
+    <el-alert v-if="addressError" :title="addressError" type="warning" :closable="false" show-icon><el-button link @click="refreshAddressTasks">重新加载进度</el-button></el-alert>
     <el-alert v-if="roadsError" :title="roadsError" type="warning" :closable="false" show-icon><el-button link @click="loadRoads">重试道路</el-button></el-alert>
     <el-alert v-if="metroVisible && metroError" :title="metroError" type="warning" :closable="false" show-icon><el-button link @click="loadMetro">重试地铁</el-button></el-alert>
     <div v-loading="loading" class="map-layout">
@@ -382,20 +347,19 @@ onBeforeUnmount(() => {
         <div class="sidebar-heading"><strong>{{ selected.length || selectedCompanyId != null ? '选中的工作地点' : '工作地点清单' }} · {{ visibleList.length }}</strong><el-button v-if="selected.length || selectedCompanyId != null" link @click="clearSelection">查看全部</el-button></div>
         <el-empty v-if="!loading && !visibleList.length" description="没有符合条件的上海工作地点" :image-size="65" />
         <div class="location-scroll">
-          <article v-for="location in visibleList" :key="location.key" class="location-card" :class="{selected: location.company.id === selectedCompanyId}" :data-company-id="location.company.id">
+          <article v-for="location in visibleList" :key="location.key" class="location-card"
+            :class="{selected: location.company.id === selectedCompanyId, 'address-recorded': companiesWithAddress.has(location.company.id), 'address-failed': addressFailures.has(location.company.id)}"
+            :aria-label="`${location.company.name}，${addressFailures.get(location.company.id) || (companiesWithAddress.has(location.company.id) ? '已收录地址' : '尚未收录详细地址')}`"
+            :data-company-id="location.company.id">
             <button class="company-name" @click="focusCompany(location)">{{ location.company.name }}</button>
-            <div v-if="location.label" class="location-label">{{ location.label }}</div>
             <p>{{ location.address }}</p>
-            <div class="location-meta"><el-tag size="small" :type="['MANUAL', 'PLACE'].includes(location.precision) ? 'success' : 'info'">{{ precisionLabel[location.precision] }}</el-tag><span>{{ location.sources.join(' / ') }}</span></div>
-            <div v-if="location.matchedName" class="match-name">匹配地点：{{ location.matchedName }}</div>
-            <div class="location-links"><el-button link type="primary" @click="editLocation(location)">编辑工作地点</el-button><el-button link type="primary" @click="emit('postings', location.company)">查看 JD</el-button><el-button link type="primary" @click="addressTasks?.start(location.company)">补全地址</el-button></div>
-            <details v-if="location.evidence?.length" class="address-evidence"><summary>地址证据</summary><div v-for="row in location.evidence" :key="row.id"><p>{{ row.evidenceText }}</p><el-button link type="primary" @click="openEvidence(row)">打开来源</el-button></div></details>
+            <p v-if="addressFailures.has(location.company.id)" class="intake-failure">{{ addressFailures.get(location.company.id) }}</p>
           </article>
         </div>
       </aside>
     </div>
-    <p class="map-footnote">区划：阿里云 DataV；本地路网：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors · ODbL</a> / Geofabrik<span v-if="roadsCount">（{{ roadsCount.toLocaleString() }} 段道路）</span>；地点匹配：Photon。楼宇匹配供参考，以招聘方确认的办公点为准。<span v-if="outsideCount">已隐藏 {{ outsideCount }} 个上海市外地点。</span></p>
-    <CompanyAddressTasks ref="addressTasks" v-model="addressTasksVisible" @completed="load" />
+    <p v-if="metroVisible && metroLoading" class="metro-loading" role="status">地铁加载中…</p>
+    <p class="map-footnote">区划：阿里云 DataV；道路 / 地铁：<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors · ODbL</a>（道路 / Geofabrik，地铁 / Overpass）<span v-if="roadsCount"> · {{ roadsCount.toLocaleString() }} 段道路</span>；地点匹配：Photon。地铁为本地数据快照，非实时运营图。楼宇匹配供参考，以招聘方确认的办公点为准。<span v-if="outsideCount">已隐藏 {{ outsideCount }} 个上海市外地点。</span></p>
   </div>
 </template>
 
@@ -412,6 +376,7 @@ onBeforeUnmount(() => {
 .workplace-panel { background: #fff; border: 1px solid #dfe4db; border-radius: 16px; overflow: hidden; }
 .map-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 24px 12px; h2 { margin: 0 0 6px; font-size: 21px; color: #213a2e; } p { margin: 0; color: #78847b; font-size: 13px; } }
 .map-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; .el-button + .el-button { margin-left: 0; } }
+.address-unrecorded { color: #67756b; font-size: 12px; white-space: nowrap; }
 .map-summary { padding: 0 24px 16px; display: flex; flex-wrap: wrap; gap: 10px 22px; color: #77817b; font-size: 13px; span:first-child { color: #243f30; font-weight: 700; } .located { color: #2e7763; } }
 .map-filters { display: grid; grid-template-columns: minmax(180px, 1fr) 170px 180px; gap: 10px; padding: 0 24px 18px; }
 .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; border-top: 1px solid #e5e9e1; min-height: 640px; }
@@ -421,12 +386,9 @@ onBeforeUnmount(() => {
 .location-sidebar { min-width: 0; border-left: 1px solid #e5e9e1; display: flex; flex-direction: column; max-height: 640px; }
 .sidebar-heading { padding: 15px 16px; border-bottom: 1px solid #e9ece6; display: flex; justify-content: space-between; align-items: center; font-size: 13px; min-height: 50px; }
 .location-scroll { overflow: auto; min-height: 0; }
-.location-card { padding: 15px 16px 12px; border-bottom: 1px solid #edf0e9; &.selected { background: #fcf5e8; } p { margin: 7px 0; font-size: 12px; line-height: 1.7; color: #67756b; overflow-wrap: anywhere; } }
+.location-card { padding: 15px 16px 12px 12px; border-left: 4px solid transparent; border-bottom: 1px solid #edf0e9; &.address-recorded { border-left-color: #2e7763; } &.selected { background: #fcf5e8; } p { margin: 7px 0; font-size: 12px; line-height: 1.7; color: #67756b; overflow-wrap: anywhere; } }
 .company-name { cursor: pointer; text-align: left; padding: 0; border: 0; background: none; color: #264d3c; font: inherit; font-size: 13px; font-weight: 700; line-height: 1.6; }
-.location-label, .match-name { font-size: 11px; color: #929b92; margin-top: 5px; }
-.location-meta { display: flex; align-items: center; gap: 8px; span { font-size: 11px; color: #929b92; } }
-.location-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; .el-button { font-size: 12px; margin-left: 0; } }
-.address-evidence { margin-top: 8px; font-size: 11px; color: #77847b; summary { cursor: pointer; } p { white-space: pre-wrap; } }
+.location-card.address-failed { border-left-color: #171c19; .intake-failure { color: #454c47; font-size: 11px; } }
 .map-footnote { font-size: 11px; color: #8b948c; padding: 12px 24px; margin: 0; line-height: 1.8; }
 @media (max-width: 1100px) { .map-layout { grid-template-columns: minmax(0, 1fr) 280px; } }
 @media (max-width: 850px) { .map-heading { align-items: flex-start; flex-direction: column; }.map-filters { grid-template-columns: minmax(0, 1fr) 140px 155px; }.map-layout { grid-template-columns: minmax(0, 1fr); }.map-canvas { height: 500px; }.location-sidebar { border-left: 0; border-top: 1px solid #e5e9e1; max-height: 380px; } }

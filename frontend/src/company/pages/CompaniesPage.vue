@@ -6,9 +6,6 @@ import {showRequestError} from '@/common/utils/error';
 import {desktop} from '@/common/desktop/client';
 import {ElMessage} from 'element-plus';
 import {onMounted, reactive, ref} from 'vue';
-import {useRouter} from 'vue-router';
-
-const router = useRouter();
 
 const rows = ref<Company[]>([]);
 const loading = ref(false);
@@ -44,12 +41,6 @@ const load = async () => {
   }
 };
 
-const openCreate = () => {
-  editingId.value = undefined;
-  Object.assign(form, emptyForm());
-  dialogVisible.value = true;
-};
-
 const openEdit = (row: Company) => {
   editingId.value = row.id;
   Object.assign(form, {
@@ -62,10 +53,6 @@ const openEdit = (row: Company) => {
       .map(location => ({...location})),
   });
   dialogVisible.value = true;
-};
-
-const viewPostings = (row: Company) => {
-  router.push({path: '/postings', query: {companyId: row.id.toString()}});
 };
 
 const openOfficialApplication = async (row: Company) => {
@@ -124,14 +111,13 @@ onMounted(load);
           <el-radio-button value="list">公司列表</el-radio-button>
           <el-radio-button value="map">上海地图</el-radio-button>
         </el-radio-group>
-        <el-button type="primary" @click="openCreate">新增公司</el-button>
       </div>
     </div>
 
-    <ShanghaiCompanyMap v-if="viewMode === 'map'" :companies="rows" @edit="openEdit" @postings="viewPostings" />
+    <ShanghaiCompanyMap v-if="viewMode === 'map'" :companies="rows" />
 
     <div v-else class="table-panel">
-      <el-table v-loading="loading" :data="rows" stripe empty-text="还没有公司，先录入目标公司">
+      <el-table v-loading="loading" :data="rows" stripe empty-text="还没有公司">
         <el-table-column label="公司" min-width="180">
           <template #default="{row}">
             <strong>{{ row.name }}</strong>
@@ -159,9 +145,8 @@ onMounted(load);
         <el-table-column label="通勤" width="90"><template #default="{row}">{{ row.commuteMinutes == null ? '-' : `${row.commuteMinutes} 分钟` }}</template></el-table-column>
         <el-table-column label="质量" width="80"><template #default="{row}">{{ row.qualityScore ?? '-' }}/20</template></el-table-column>
         <el-table-column label="状态" width="85"><template #default="{row}"><el-tag :type="row.active ? 'success' : 'info'">{{ row.active ? '启用' : '停用' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{row}">
-            <el-button link type="primary" @click="viewPostings(row)">查看 JD</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           </template>
         </el-table-column>

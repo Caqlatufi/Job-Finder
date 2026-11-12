@@ -23,16 +23,16 @@ test('本地单用户求职主链路可从页面完成', async ({page}) => {
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
   await page.getByRole('menuitem', {name: '公司库'}).click();
-  await page.getByRole('button', {name: '新增公司'}).click();
-  let dialog = page.getByRole('dialog');
-  await formItem(dialog, '公司名称').locator('input').fill(companyName);
-  await formItem(dialog, '办公地址').locator('input').fill('上海市闵行区');
-  await page.getByRole('button', {name: '保存', exact: true}).click();
+  const base = process.env.JD_TEST_BASE_URL;
+  if (!base || new URL(base).port === '7890' || process.env.JD_TEST_ALLOW_WRITES !== '1') throw new Error('Company fixtures require an isolated writable backend');
+  const seeded = await fetch(new URL('api/companies', base), {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: companyName, businessType: 'UNKNOWN', productOwnership: 'UNKNOWN', address: '上海市闵行区', active: true})});
+  expect(seeded.status).toBe(200);
+  await page.reload();
   await expect(page.getByText(companyName, {exact: true})).toBeVisible();
-
-  const companyRow = page.locator('.el-table__row').filter({hasText: companyName});
-  await companyRow.getByRole('button', {name: '查看 JD'}).click();
-  await expect(page.locator('.toolbar-search .el-select').first()).toContainText(companyName);
+  await expect(page.getByRole('button', {name: '新增公司', exact: true})).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '查看 JD', exact: true})).toHaveCount(0);
+  let dialog: Locator;
 
   await page.getByRole('menuitem', {name: '简历版本'}).click();
   await expect(page.getByText('标准版简历', {exact: true})).toBeVisible();

@@ -59,6 +59,20 @@ public class JobPosting extends BaseEntity {
     @Column(length = 255)
     private String location;
 
+    @Column(length = 20)
+    private String addressLookupStatus;
+
+    @Column(length = 500)
+    private String addressLookupMessage;
+
+    private LocalDateTime addressLookupCheckedAt;
+
+    @Column(length = 1000)
+    private String addressLookupSourceUrl;
+
+    @Column(columnDefinition = "TEXT")
+    private String addressLookupEvidence;
+
     private Integer salaryMinK;
     private Integer salaryMaxK;
     private Integer salaryMonths;

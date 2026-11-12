@@ -38,6 +38,16 @@ public final class PostingDtos {
     ) {
     }
 
+    public record AddressLookupRequest(
+            @NotNull Long expectedCompanyId,
+            @NotBlank @Size(max = 160) String expectedTitle,
+            @NotBlank @Size(max = 1000) String expectedSourceUrl,
+            @NotBlank @Pattern(regexp = "JD_CLOSED|NO_ADDRESS|FAILED") String status,
+            @NotBlank @Size(max = 500) String message,
+            @NotBlank @Size(max = 2000) String evidence
+    ) {
+    }
+
     public record CommuteRequest(
             @NotNull(message = "请填写时间下限") @Min(0) @Max(1440) Integer minMinutes,
             @NotNull(message = "请填写时间上限") @Min(0) @Max(1440) Integer maxMinutes,
@@ -127,7 +137,12 @@ public final class PostingDtos {
             String nextAction,
             LocalDateTime nextActionAt,
             LocalDateTime createdAt,
-            LocalDateTime updatedAt
+            LocalDateTime updatedAt,
+            String addressLookupStatus,
+            String addressLookupMessage,
+            LocalDateTime addressLookupCheckedAt,
+            String addressLookupSourceUrl,
+            String addressLookupEvidence
     ) {
     }
 }

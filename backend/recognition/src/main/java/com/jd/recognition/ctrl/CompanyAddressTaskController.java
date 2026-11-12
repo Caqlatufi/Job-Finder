@@ -18,6 +18,21 @@ import java.util.List;
 public class CompanyAddressTaskController {
     private final CompanyAddressTaskService service;
     private final CompanyService companies;
+    private final com.jd.recognition.service.CompanyAddressBatchService batches;
+
+    @GetMapping("/batch")
+    public RestResultResponse<JsonNode> batch() { return RestResultResponse.of(batches.status()); }
+
+    @PostMapping("/batch/start")
+    public RestResultResponse<JsonNode> startBatch() { return RestResultResponse.of(batches.start()); }
+
+    @PostMapping("/batch/stop")
+    public RestResultResponse<JsonNode> stopBatch() { return RestResultResponse.of(batches.stop()); }
+
+    @GetMapping("/companies/{companyId}/plan")
+    public RestResultResponse<com.jd.recognition.service.CompanyAddressBatchService.IntakePlan> plan(@PathVariable Long companyId) {
+        return RestResultResponse.of(batches.plan(companyId));
+    }
 
     public record CreateRequest(@NotNull @Positive Long companyId) { }
 

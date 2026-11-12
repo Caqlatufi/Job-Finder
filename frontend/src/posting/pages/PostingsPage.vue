@@ -5,6 +5,7 @@ import PostingImportDialog from '@/posting/components/PostingImportDialog.vue';
 import PostingGreetingDialog from '@/posting/components/PostingGreetingDialog.vue';
 import PostingCommute from '@/posting/components/PostingCommute.vue';
 import PostingBossCompetition from '@/posting/components/PostingBossCompetition.vue';
+import PostingAddressLookup from '@/posting/components/PostingAddressLookup.vue';
 import {companyApi} from '@/company/api/companyApi';
 import {interviewApi} from '@/interview/api/interviewApi';
 import {pipelineApi} from '@/pipeline/api/pipelineApi';
@@ -296,6 +297,7 @@ onMounted(async () => {
           <template #default="{row}">
             <button class="posting-title" type="button" @click="openDetail(row)">{{ row.title }}</button>
             <div class="cell-subtitle">{{ row.companyName }} · {{ row.location || '地点待核实' }}</div>
+            <PostingAddressLookup :posting="row" />
             <el-button v-if="officialChannels.get(row.companyId)" link type="primary" @click="openOfficialApplication(row)">官方招聘</el-button>
           </template>
         </el-table-column>
@@ -379,6 +381,7 @@ onMounted(async () => {
           <el-descriptions-item label="地点">{{ detail.location || '-' }}</el-descriptions-item>
           <el-descriptions-item label="下一步">{{ detail.nextAction || '-' }}</el-descriptions-item>
         </el-descriptions>
+        <PostingAddressLookup :posting="detail" expanded />
         <h3>通勤时间与备注</h3>
         <PostingCommute :posting="detail" @saved="onCommuteSaved" />
         <p class="pre-line">{{ commuteSummary(detail.riskNotes).address }}</p>

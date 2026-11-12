@@ -21,17 +21,18 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.UUID;
 
 /** Durable file queue shared by JD import and company address discovery. Each queue runs serially. */
 public class FileTaskQueueService {
-    private static final Set<String> RETRYABLE = Set.of("FAILED", "WAITING_USER", "NEEDS_REVIEW", "PARTIAL");
+    private static final Set<String> RETRYABLE = Set.of("FAILED", "WAITING_USER", "NEEDS_REVIEW", "PARTIAL", "OPTIMIZATION_PENDING", "NOT_FOUND", "STOPPED");
     protected final ObjectMapper mapper;
     private final String workerScript;
     private final String tabPrefix;
     private final Path project;
-    private final Path root;
+    protected final Path root;
     private final boolean enabled;
     private final String node;
     private final String codex;
@@ -60,10 +61,11 @@ public class FileTaskQueueService {
     protected synchronized JsonNode enqueue(ObjectNode seed, String dedupKey) {
         try {
             Files.createDirectories(root.resolve("jobs"));
-            for (Path job : jobs()) {
+            for (Path job : currentJobs()) {
                 ObjectNode state = refresh(job);
                 if (seed.path(dedupKey).asText().equals(state.path(dedupKey).asText()) &&
-                        Set.of("QUEUED", "RUNNING", "STARTING").contains(state.path("status").asText())) {
+                        (taskGroupKey() != null ? !"SUCCEEDED".equals(state.path("status").asText())
+                                : Set.of("QUEUED", "RUNNING", "STARTING").contains(state.path("status").asText()))) {
                     return view(job, state);
                 }
             }
@@ -93,11 +95,12 @@ public class FileTaskQueueService {
             try (var channel = FileChannel.open(root.resolve("scheduler.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
                     var lock = channel.tryLock()) {
                 if (lock == null) return;
+                currentJobs();
                 List<Path> queued = new ArrayList<>();
                 for (Path job : jobs()) {
                     ObjectNode state = refresh(job);
                     if (Set.of("STARTING", "RUNNING").contains(state.path("status").asText())) return;
-                    if ("QUEUED".equals(state.path("status").asText())) queued.add(job);
+                    if ("QUEUED".equals(state.path("status").asText()) && canLaunch(state)) queued.add(job);
                 }
                 if (!queued.isEmpty()) launch(queued.get(0));
             }
@@ -109,7 +112,7 @@ public class FileTaskQueueService {
     public synchronized List<JsonNode> list() {
         try {
             List<JsonNode> result = new ArrayList<>();
-            for (Path job : jobs()) result.add(view(job, refresh(job)));
+            for (Path job : currentJobs()) result.add(view(job, refresh(job)));
             result.sort(Comparator.comparing((JsonNode item) -> item.path("createdAt").asText()).reversed());
             // Retain all unfinished tasks and the last twenty terminal tasks in the response.
             List<JsonNode> visible = new ArrayList<>();
@@ -125,13 +128,25 @@ public class FileTaskQueueService {
         try {
             Path job = job(id);
             ObjectNode state = refresh(job);
+            if (taskGroupKey() != null) {
+                for (Path current : currentJobs()) {
+                    ObjectNode candidate = refresh(current);
+                    if (candidate.path(taskGroupKey()).equals(state.path(taskGroupKey())) && !current.equals(job)) {
+                        // A retry from an old page must join the company's current task.
+                        job = current;
+                        state = candidate;
+                        if (!RETRYABLE.contains(state.path("status").asText())) return view(job, state);
+                        break;
+                    }
+                }
+            }
             if (!RETRYABLE.contains(state.path("status").asText()) || alive(state)) {
                 throw new BusinessException(ErrorCode.CONFLICT, HttpStatus.CONFLICT, "任务尚在运行或已完成，不能重复启动");
             }
             state.put("status", "QUEUED");
             state.remove(List.of("errorCode", "message", "completedAt", "phase"));
             write(job.resolve("state.json"), state);
-            return state;
+            return view(job, state);
         } catch (IOException e) { throw storageError(); }
     }
 
@@ -140,6 +155,48 @@ public class FileTaskQueueService {
             Path job = job(id);
             return view(job, refresh(job));
         } catch (IOException e) { throw storageError(); }
+    }
+
+    /** Optional business grouping: retries and paused work share one current task per key. */
+    protected String taskGroupKey() { return null; }
+
+    protected boolean canLaunch(JsonNode state) throws IOException { return true; }
+
+    private List<Path> currentJobs() throws IOException {
+        List<Path> all = jobs();
+        String key = taskGroupKey();
+        if (key == null) return all;
+        var states = new LinkedHashMap<Path, ObjectNode>();
+        var current = new LinkedHashMap<String, Path>();
+        for (Path job : all) {
+            ObjectNode state = refresh(job);
+            states.put(job, state);
+            if ("SUPERSEDED".equals(state.path("status").asText())) continue;
+            String group = state.path(key).asText();
+            Path previous = current.get(group);
+            if (previous == null || compareCurrent(state, states.get(previous)) > 0) current.put(group, job);
+        }
+        for (var entry : states.entrySet()) {
+            ObjectNode state = entry.getValue();
+            Path selected = current.get(state.path(key).asText());
+            if (selected == null || selected.equals(entry.getKey()) || alive(state)
+                    || Set.of("SUCCEEDED", "SUPERSEDED").contains(state.path("status").asText())) continue;
+            // Keep attempts, screenshots and checkpoints; only retire duplicate scheduling.
+            state.put("supersededStatus", state.path("status").asText());
+            state.put("status", "SUPERSEDED");
+            state.put("supersededBy", selected.getFileName().toString());
+            write(entry.getKey().resolve("state.json"), state);
+        }
+        return new ArrayList<>(current.values());
+    }
+
+    private int compareCurrent(ObjectNode left, ObjectNode right) {
+        Set<String> running = Set.of("STARTING", "RUNNING");
+        int active = Boolean.compare(running.contains(left.path("status").asText()),
+                running.contains(right.path("status").asText()));
+        if (active != 0) return active;
+        int created = Instant.parse(left.path("createdAt").asText()).compareTo(Instant.parse(right.path("createdAt").asText()));
+        return created != 0 ? created : left.path("taskId").asText().compareTo(right.path("taskId").asText());
     }
 
     private ObjectNode view(Path job, ObjectNode state) throws IOException {
@@ -174,7 +231,7 @@ public class FileTaskQueueService {
         if (Files.isRegularFile(completion)) {
             ObjectNode data = (ObjectNode) mapper.readTree(Files.readAllBytes(completion));
             if (data.path("attempt").asInt() != state.path("attempt").asInt()
-                    || !Set.of("SUCCEEDED", "FAILED", "WAITING_USER", "NEEDS_REVIEW", "PARTIAL").contains(data.path("status").asText())) {
+                    || !Set.of("SUCCEEDED", "FAILED", "WAITING_USER", "NEEDS_REVIEW", "PARTIAL", "OPTIMIZATION_PENDING", "NOT_FOUND", "STOPPED").contains(data.path("status").asText())) {
                 throw new IOException("Invalid completion");
             }
             state.setAll(data);

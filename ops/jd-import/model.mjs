@@ -28,6 +28,7 @@ export async function readPage(input, directory, settings, standard) {
   let child;
   try {
     child = spawn(await resolveGreetingCodex(settings.codex), args, {cwd: directory, windowsHide: true, shell: false,
+      signal: settings.signal,
       stdio: ['pipe', 'pipe', 'pipe']});
     const diagnostics = createCodexDiagnostics();
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
@@ -50,6 +51,7 @@ export async function readPage(input, directory, settings, standard) {
     try { return JSON.parse(raw.replace(/^\uFEFF/, '')); }
     catch { throw new Error('INVALID_RESULT'); }
   } catch (error) {
+    if (settings.signal?.aborted) throw new ImportError('ADDRESS_STOPPED', '地址收录已停止', 'STOPPED');
     const safe = failurePayload(error);
     const messages = {
       CODEX_USAGE_LIMIT: 'Codex 使用额度已用完，请等额度恢复后重试；无需重新登录',

@@ -33,6 +33,7 @@ export function localApi(base) {
 export async function desktopWorkflow(action, payload = {}) {
   const argumentsList = ['frontend/src/app/electron/workflow.mjs', 'WEB', action];
   if (action === 'openJob') argumentsList.push(payload.url, payload.key);
+  else if (action === 'close') argumentsList.push(payload.key);
   else if (['info', 'tabs'].includes(action)) { /* No target needed. */ }
   else {
     const names = {key: 'key', captureId: 'capture', rect: 'rect', x: 'x', y: 'y', deltaX: 'delta-x', deltaY: 'delta-y'};
@@ -71,13 +72,17 @@ export async function work(directory, attempt, settings) {
     processStartedAt: new Date(Date.now() - process.uptime() * 1000).toISOString()});
   const remember = (name, value) => atomicJson(path.join(run, name + '.json'), value);
   let calls = 0;
+  let task, opened = false;
   try {
-    const task = JSON.parse(await fs.readFile(path.join(directory, 'task.json'), 'utf8'));
+    task = JSON.parse(await fs.readFile(path.join(directory, 'task.json'), 'utf8'));
     const api = localApi(settings.apiBase);
     const document = await fs.readFile(path.join(projectRoot, '.agents/skills/jd-import-prompt.md'), 'utf8');
     const standard = document.match(/```text\r?\n([\s\S]*?)\r?\n```/)?.[1];
     if (!standard) throw new ImportError('PROMPT_MISSING', '自动收录提示词缺失');
-    const result = await importPosting(task, {api, workflow: desktopWorkflow, remember,
+    const result = await importPosting(task, {api, workflow: (action, payload) => {
+      if (action === 'openJob') opened = true;
+      return desktopWorkflow(action, payload);
+    }, remember,
       checkpointer: new FileCheckpointer(path.join(directory, 'graph.checkpoint')),
       progress: data => atomicJson(path.join(run, 'progress.json'), {...data, updatedAt: new Date().toISOString()}),
       model: input => readPage(input, path.join(run, 'model-' + ++calls), settings, standard),
@@ -111,6 +116,11 @@ export async function work(directory, attempt, settings) {
     const completion = {status: safe.status, attempt, errorCode: safe.code, message: safe.message, completedAt: new Date().toISOString()};
     await atomicJson(path.join(run, 'completion.json'), completion);
     return completion;
+  } finally {
+    if (opened && task?.tabKey === 'jd-import:' + task.taskId) {
+      try { await desktopWorkflow('close', {key: task.tabKey}); }
+      catch (error) { await remember('tab-cleanup', {errorCode: error.code || 'TAB_CLOSE_FAILED'}); }
+    }
   }
 }
 

@@ -15,6 +15,16 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class RecognitionConfig {
 
     @Bean
+    com.jd.recognition.service.CompanyAddressBatchService companyAddressBatchService(ObjectMapper mapper,
+            com.jd.recognition.service.CompanyAddressTaskService tasks,
+            com.jd.company.service.CompanyService companies,
+            com.jd.company.service.CompanyAddressDiscoveryService discoveries,
+            com.jd.posting.repo.JobPostingRepository postings,
+            com.jd.company.service.CompanyGeocodingService geocoding) {
+        return new com.jd.recognition.service.CompanyAddressBatchService(mapper, tasks, companies, discoveries, postings, geocoding);
+    }
+
+    @Bean
     com.jd.recognition.service.CompanyAddressTaskService companyAddressTaskService(ObjectMapper mapper,
             @Value("${jd-collector.recognition.project-root:}") String root,
             @Value("${jd-collector.company-address.work-directory:}") String directory,

@@ -23,9 +23,9 @@ test('地点合并保留一公司多办公点，不将市级地址或外地地�
   expect(rows.find(row => row.company.id === 3)?.longitude).toBeUndefined();
 });
 
-test('上海地图完整读取超过100家公司，多地点可编辑保存，外部定位失败仍能看区域分布（模拟）', async ({page}) => {
+test('上海地图完整读取超过100家公司、多地点展示，收录统一入口且无手动定位按钮（模拟）', async ({page}) => {
   await page.setViewportSize({width: 1560, height: 1100});
-  let first = {...company(1, '多办公点地图测试公司', '上海徐汇区宜山路868号'), workLocations: [
+  const first = {...company(1, '多办公点地图测试公司', '上海徐汇区宜山路868号'), workLocations: [
     {label: '徐汇办公点', address: '上海徐汇区宜山路868号', longitude: 121.43, latitude: 31.18},
     {label: '浦东办公点', address: '上海浦东新区张江', longitude: 121.60, latitude: 31.20},
   ]};
@@ -36,10 +36,6 @@ test('上海地图完整读取超过100家公司，多地点可编辑保存，�
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();
-    if (url.pathname.endsWith('/companies/1') && method === 'PUT') {
-      first = {...first, ...request.postDataJSON()};
-      return route.fulfill({json: {code: 200, result: first}});
-    }
     if (url.pathname.endsWith('/companies/location-positions') && method === 'POST') {
       return route.fulfill({status: 502, json: {code: 40002, msg: '地址匹配暂不可用，可继续查看区域分布，稍后重试'}});
     }
@@ -64,22 +60,18 @@ test('上海地图完整读取超过100家公司，多地点可编辑保存，�
   await expect.poll(() => map.locator('canvas').count()).toBeGreaterThan(0);
   await expect(map.locator('.location-card[data-company-id="1"]')).toHaveCount(3);
   await expect(map.locator('.location-card[data-company-id="2"]')).toHaveCount(0);
+  await expect(map.locator('.location-card[data-company-id="1"].address-recorded')).toHaveCount(3);
+  await expect(map.locator('.location-card[data-company-id="1"]').getByRole('button', {name: '补全地址', exact: true})).toHaveCount(0);
+  await expect(map.locator('.location-card[data-company-id="3"].address-recorded')).toHaveCount(0);
+  await expect(map.getByRole('button', {name: '补全地址', exact: true})).toHaveCount(0);
+  await expect(map.locator('.location-meta, .match-name, .address-evidence')).toHaveCount(0);
   await expect(map).toContainText('已隐藏 1 个上海市外地点');
-  await map.getByRole('button', {name: '匹配地图坐标', exact: true}).click();
-  await expect(map.locator('.el-alert')).toContainText('地址匹配暂不可用');
+  await expect(map.getByRole('button', {name: '匹配地图坐标', exact: true})).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '新增公司', exact: true})).toHaveCount(0);
   await map.locator('input[aria-label="地图搜索"]').fill('多办公点地图测试公司');
   await expect(map.locator('.location-card')).toHaveCount(3);
   await page.screenshot({path: 'test-results/company-shanghai-map-desktop.png'});
-  await map.getByRole('button', {name: '编辑工作地点', exact: true}).first().click();
-  const dialog = page.getByRole('dialog', {name: '编辑公司', exact: true});
-  await expect(dialog.locator('.work-location-row')).toHaveCount(3);
-  await dialog.getByRole('button', {name: '添加工作地点', exact: true}).click();
-  await dialog.locator('input[aria-label="地点4名称"]').fill('新增办公点');
-  await dialog.locator('input[aria-label="地点4地址"]').fill('上海市闵行区顾戴路2337号');
-  await dialog.getByRole('button', {name: '保存', exact: true}).click();
-  await expect(dialog).toBeHidden();
-  expect(first.workLocations).toHaveLength(4);
-  await expect(map.locator('.location-card[data-company-id="1"]')).toHaveCount(4);
+  await expect(map.getByRole('button', {name: '编辑工作地点', exact: true})).toHaveCount(0);
   await page.setViewportSize({width: 768, height: 1100});
   await page.screenshot({path: 'test-results/company-shanghai-map-768.png'});
 });
@@ -96,7 +88,7 @@ test('地图加载失败提供重试，空数据提供空态（模拟）', async
     return route.fulfill({json: {code: 200, result: [], page: {totalPages: 1, totalElements: 0}}});
   });
   await page.goto('./companies');
-  await expect(page.getByText('还没有公司，先录入目标公司', {exact: true})).toBeVisible();
+  await expect(page.getByText('还没有公司', {exact: true})).toBeVisible();
   await page.getByText('上海地图', {exact: true}).click();
   await expect(page.locator('.el-alert')).toContainText('地图地点加载失败');
   fail = false;

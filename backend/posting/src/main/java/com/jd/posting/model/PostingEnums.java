@@ -14,7 +14,7 @@ public final class PostingEnums {
     }
 
     public enum SortBy {
-        SCORE, BOSS_COMPETITION
+        SCORE, BOSS_COMPETITION, LATEST
     }
 
     public enum Tier {
