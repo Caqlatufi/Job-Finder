@@ -1,41 +1,67 @@
-# JD Collector
+# Job Finder
 
-本地单用户求职工作台，支持公司库、JD 收集与评分、简历 Markdown 编辑与 PDF 打印、投递跟进、面试复盘、看板和 CSV 导出。Electron 内置招聘平台标签，登录与验证码由用户在平台页面完成。
+把岗位筛选、简历准备、投递跟进和面试复盘放在同一个本地工作台。
 
-## 技术栈
+面向个人求职者，在 Windows 本机运行，使用内嵌数据库保存资料。
 
-- 前端：Vue 3、TypeScript、Vite、Element Plus、Pinia、axios、SCSS。
-- 前端结构：业务域各自通过 `index.ts` 注册懒加载路由，由 `main.ts` 逐个挂载，`app/router.ts` 统一装配。
-- 后端：Java 17、Spring Boot 3.1.1、Gradle、Spring Data JPA、内嵌 H2（兼容显式 MySQL / MariaDB 连接）、Lombok。
-- 公共实体及 REST 响应由本项目维护，不需要本机私有框架。
-- 接口：REST，统一前缀 `/jd-collector/api`。
-- 本地端口：打包版统一使用 `7890`；前端独立开发时使用 `3002`。
-- 数据表：首版使用 JPA DDL update 管理，不新增 Simple Migration 建表脚本。
+## 功能
 
-本项目已移除 `yhc.framework:commons` 依赖：基础实体与 REST 响应源码位于 `backend/common`，仓储直接使用 Spring Data JPA。构建无需框架源码、私有 Maven、本机 `mavenLocal()` 或另行提供的框架 JAR，克隆后可按下方快速开始构建。
+| 功能 | 可以做什么 |
+| --- | --- |
+| [岗位收录与评分](docs/05-JD管理与评分.md) | 收录岗位，保留原文与来源，结合简历、公司、通勤、薪资和新鲜度判断优先级与缺口 |
+| [公司与通勤](docs/06-公司资料与通勤.md) | 整理公司资料和岗位办公点，在地图上查看分布并核对通勤信息 |
+| [简历管理](docs/07-简历版本管理.md) | 管理经历母版与定向版本，编辑 Markdown，预览并输出 PDF |
+| [投递与跟进](docs/09-投递记录与跟进.md) | 记录实际投递、沟通阶段和下一步，查看面试安排与求职看板 |
+| [面试安排与复盘](docs/10-面试安排与复盘.md) | 记录面试时间、问题、反馈和复盘，持续补齐准备材料 |
+| [岗位技能图谱](docs/16-JD知识图谱.md) | 查看多个目标岗位共同要求的技能，确定准备重点 |
+| [AI 辅助准备](docs/17-打招呼用语生成.md) | 根据岗位与简历生成可编辑、可复制的打招呼用语 |
+| [导出与备份](docs/14-数据备份与恢复.md) | 按筛选导出岗位 CSV，备份工作台数据库 |
 
-## 文档
+建议使用顺序：**导入简历 → 设置求职门槛 → 收录与筛选岗位 → 准备定向材料 → 投递跟进 → 面试记录与复盘。**
 
-- [主需求功能文档导航](docs/README.md)
-- [求职计划示例](config/sprint-plan.example.md)
-- [开发与运行约定](AGENTS.md)
+列表批量采集目前适配 BOSS，单岗位链接收录支持招聘网站和企业官网。登录、验证码、真实投递及消息发送由本人操作。
 
 ## 快速开始（Windows）
 
-准备 Java 17、Node.js 22.12+ 和 PowerShell。默认数据库随 Java 应用运行，无需安装 MySQL。采集还需要安装并登录 [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)。当前桌面采集使用 Windows 本地 workflow，岗位方向支持 Java 后端、平台后端、AI 应用、全栈、AI 工具与测试平台。
+准备 **Git、Java 17、Node.js 22.12+ 和 PowerShell**，建议使用英文路径。默认使用内嵌 H2，无需安装 MySQL。在项目根目录执行以下命令即可启动工作台。
 
 ### 1. 克隆与初始化
 
-克隆仓库后进入项目根目录，执行：
-
 ```powershell
-git clone https://github.com/Caqlatufi/jd-collector.git
-Set-Location jd-collector
+git clone https://github.com/Caqlatufi/Job-Finder.git
+Set-Location Job-Finder
 .\ops\init-local.ps1
-notepad .\local\env.json
 ```
 
-### 2. 填写本地配置
+### 2. 构建并打开工作台
+
+```powershell
+npm ci --prefix frontend
+npm run desktop:install --prefix frontend
+.\ops\build.ps1
+.\ops\start-desktop.ps1
+.\ops\doctor.ps1 -Running
+```
+
+桌面启动器会启动本地后端并打开工作台，页面地址为 `http://127.0.0.1:7890/jd-collector/`。后续日常打开只需运行 `.\ops\start-desktop.ps1`。
+
+### 3. 填写资料，开始使用
+
+- 在“简历版本”保存一份有真实正文、已启用的 `MASTER`；本地简历模板不会自动入库。
+- 在“JD 门槛”填写求职条件，再按城市、关键词和数量确定本轮筛选范围。
+- 需要 AI 采集时，安装并登录 [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)，将 `local/env.json` 中的 `JD_RECOGNITION_ENABLED` 设为字符串 `"true"`，核对下方模型配置后重启。完整配置见下方“AI 采集配置”。
+
+## 文档
+
+- [功能文档与使用说明](docs/README.md)
+- [JD 门槛填写](docs/15-JD门槛填写.md)
+- [求职计划示例](config/sprint-plan.example.md)
+- [开发与运行约定](AGENTS.md)
+
+<details>
+<summary>AI 采集配置与 Agent 接手</summary>
+
+### AI 采集配置
 
 默认将 H2 数据保存在 `local/data/jd-collector.mv.db`，可通过 `JD_COLLECTOR_DATA_DIR` 指向其他可写目录。已有 MySQL 数据需要先按[内嵌数据库与迁移](docs/19-内嵌数据库与迁移.md)迁移核对，不能仅改连接后把空库当作迁移成功。启用采集时将 `JD_RECOGNITION_ENABLED` 改为字符串 `"true"`，并确认 Codex 已登录。
 
@@ -57,36 +83,7 @@ notepad .\local\env.json
 
 配置、简历和截图均保留在本地被忽略的位置。已有配置不会被初始化脚本覆盖；升级时按 [配置示例](config/env.example.json) 手动补需要的字段。
 
-### 3. 安装、检查与构建
-
-```powershell
-Set-Location frontend
-npm ci
-npm run desktop:install
-Set-Location ..
-.\ops\doctor.ps1
-.\ops\build.ps1
-.\ops\start-desktop.ps1
-.\ops\doctor.ps1 -Running
-```
-
-`build.ps1` 一次生成网页、Electron 和一体化 JAR；桌面启动器会启动后端并等待健康检查。工作台入口为 `http://127.0.0.1:7890/jd-collector/`。
-
-自检默认不调用模型。`FAIL` 需要修复；`WARN` 表示尚未构建、未启用识别或未完成采集准备。H2 检查数据目录，MySQL 检查端口，启动后还需检查真实接口。采集前还可运行一次合成图片探测，会消耗当前 Codex 登录方式对应的额度：
-
-```powershell
-.\ops\doctor.ps1 -Running -ProbeModel
-```
-
-模型探测使用与采集相同的 CLI 参数及图片输入，不传简历；诊断保存在被忽略的 `runtime/doctor/`。成功不等于真实招聘页面识别或业务筛选已验收。
-
-### 4. 提供新简历和筛选范围
-
-将自己的简历整理到 `local/resume-starter.md`（Markdown 至少包含 `# 姓名` 和一个 `## 内容章节`），或交给 Agent 从你提供的文件转换；原始附件也放在 `local/`。可选照片放 `local/resume/photo.png`。
-
-在工作台“简历版本”新增并保存一个启用的 `MASTER`，核对正文。模板文件只填充新增表单，**不会自动写入数据库**。在“JD 门槛”页面保存筛选答案，再填写 `local/JD搜索任务单.md` 的平台、城市、关键词、顺序和本轮数量。未确认答案不作为条件；履历匹配评分以启用 Master 的真实经历为依据。
-
-### 5. 交给新的 Dot
+### 交给 Agent 接手
 
 按 [Dot 官方连接说明](https://learn.chatgpt.com/docs/dots/computers-and-apps)，在 Windows ChatGPT 应用中打开 Dot 资料页，通过 Computers → Your computer → Allow access 连接本机。保持电脑在线、ChatGPT 应用打开，并让它在此项目目录创建本地 Codex/Work 任务。GitHub 地址用于取得源码，本机任务负责运行项目和 Electron workflow。
 
@@ -104,7 +101,14 @@ Set-Location ..
 不要自动投递、联系招聘者或向招聘网站上传简历。
 ```
 
-首次试采的落库与回读通过后，再扩大批次。当前采集仅使用 BOSS，操作规则见 `.agents/skills/jd-boss/SKILL.md`，真实页面可能要求重新登录、验证或调整截图操作。
+首次试采的落库与回读通过后，再扩大批次。列表批量采集目前适配 BOSS，操作规则见 [.agents/skills/jd-boss/SKILL.md](.agents/skills/jd-boss/SKILL.md)；单岗位链接收录可读取招聘网站或企业官网岗位页，保留页面有效性、完整性与截图识别核对。登录和验证码由本人完成。
+
+自检默认不调用模型；需要验证图片识别接入时，可运行 `.\ops\doctor.ps1 -Running -ProbeModel`，该操作会消耗模型额度。探测成功只表示模型链路可用，实际岗位仍需按截图、门槛和简历核对。
+
+</details>
+
+<details>
+<summary>运行配置、个人数据与备份</summary>
 
 ## 运行配置与常用命令
 
@@ -162,6 +166,23 @@ Set-Location ..
 
 平台会话保留在 Electron 用户数据目录中；Codex 登录沿用本机 CLI，不保存到源码。截图识别配置和环境自检见上文，工作流协议见 [.agents/skills/platform-workflow.md](.agents/skills/platform-workflow.md)。
 
+</details>
+
+<details>
+<summary>技术栈、开发验证与源码发布</summary>
+
+## 技术栈
+
+- 前端：Vue 3、TypeScript、Vite、Element Plus、Pinia、axios、SCSS。
+- 前端结构：业务域各自通过 `index.ts` 注册懒加载路由，由 `main.ts` 逐个挂载，`app/router.ts` 统一装配。
+- 后端：Java 17、Spring Boot 3.1.1、Gradle、Spring Data JPA、内嵌 H2（兼容显式 MySQL / MariaDB 连接）、Lombok。
+- 工作台后端的公共实体及 REST 响应由本项目维护，不需要本机私有框架。
+- 接口：REST，统一前缀 `/jd-collector/api`。
+- 本地端口：打包版统一使用 `7890`；前端独立开发时使用 `3002`。
+- 数据表：首版使用 JPA DDL update 管理，不新增 Simple Migration 建表脚本。
+
+工作台 `backend` 已移除 `yhc.framework:commons` 依赖：基础实体与 REST 响应源码位于 `backend/common`，仓储直接使用 Spring Data JPA。构建无需框架源码、私有 Maven、本机 `mavenLocal()` 或另行提供的框架 JAR，可按[快速开始](#快速开始windows)构建工作台。
+
 ## 验证与发布源码
 
 ```powershell
@@ -182,6 +203,8 @@ node ops/export-source.mjs
 `.gitignore` 不会清除旧提交。原仓库已有个人资料时，请使用无历史的源码导出建立新仓库，勿将父目录仓库或其旧历史直接公开。当前工具不改写历史、不提交、不推送。
 
 完整命令、自动启动和恢复约定见[开发与运行约定](AGENTS.md)。测试使用独立 H2 / Electron userData；访问真实个人库的只读用例不代表通用夹具验证。
+
+</details>
 
 ## 许可证
 
